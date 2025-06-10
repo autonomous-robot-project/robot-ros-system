@@ -1,4 +1,4 @@
-# Autonomous Robot - Core System
+# AMR Project - Robot Software
 
 This repository contains the main software for the autonomous mobile robot, running on a Raspberry Pi with ROS (Robot Operating System). It includes:
 
