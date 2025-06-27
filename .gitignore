@@ -172,3 +172,11 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# VS Code
+.vscode
+
+# ROS 2 build
+build/
+install/
+log/
