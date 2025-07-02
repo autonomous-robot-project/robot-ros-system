@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "control_node = amr_robot.control_node:main",
+            "uart_publisher_node = amr_robot.uart_comm:main",
         ],
     },
 )
