@@ -1,4 +1,5 @@
 import time
+
 import rclpy
 import serial
 from rclpy.node import Node
@@ -46,7 +47,7 @@ class UartCommNode(Node):
 
         start = time.time()
         while True:
-            line = self.serial_port.readline().decode().strip()
+            line = self._read_line()
             if line == "READY":
                 break
             if time.time() - start > self.handshake_timeout:
@@ -55,7 +56,7 @@ class UartCommNode(Node):
     def read_from_micro(self):
         if self.serial_port.in_waiting > 0:
             try:
-                line = self.serial_port.readline().decode("utf-8").strip()
+                line = self._read_line()
                 if line:
                     msg = String()
                     msg.data = line
@@ -70,6 +71,13 @@ class UartCommNode(Node):
             self.serial_port.write(data.encode("utf-8"))
         except Exception as e:
             self.get_logger().error(f"Error sending data to serial port: {e}")
+
+    def _read_line(self):
+        try:
+            line = self.serial_port.readline().decode("utf-8").strip()
+        except UnicodeDecodeError as e:
+            line = None
+        return line
 
 
 def main(args=None):
