@@ -3,15 +3,14 @@
 <package format="3">
   <name>robot_verification</name>
   <version>0.1.0</version>
-  <description>Pass/fail criteria of the bench verifications, evaluated on ros2 bag recordings.</description>
+  <description>Bench checks: the link check and the pass/fail criteria of the verifications on ros2 bags.</description>
   <maintainer email="lucasfranciscovieira@gmail.com">Lucas Vieira</maintainer>
   <license>Proprietary</license>
 
+  <exec_depend>ament_index_python</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>rosbag2_py</exec_depend>
 
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
 
   <export>

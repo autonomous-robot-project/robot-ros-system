@@ -14,10 +14,15 @@ setup(
     zip_safe=True,
     maintainer='Lucas Vieira',
     maintainer_email='lucasfranciscovieira@gmail.com',
-    description='Pass/fail criteria of the bench verifications, evaluated on ros2 bag recordings.',
+    description=(
+        'Bench checks: the link check and the pass/fail criteria of the '
+        'verifications on ros2 bags.'
+    ),
     license='Proprietary',
     tests_require=['pytest'],
     entry_points={
-        'console_scripts': [],
+        'console_scripts': [
+            'check_link = robot_verification.check_link:main',
+        ],
     },
 )
