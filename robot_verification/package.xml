@@ -3,7 +3,7 @@
 <package format="3">
   <name>robot_verification</name>
   <version>0.1.0</version>
-  <description>Bench checks: the link check and the pass/fail criteria of the verifications on ros2 bags.</description>
+  <description>Bench checks and measurements: the link check, the link load and the pass/fail criteria of the verifications on ros2 bags.</description>
   <maintainer email="lucasfranciscovieira@gmail.com">Lucas Vieira</maintainer>
   <license>Proprietary</license>
 

@@ -4,7 +4,7 @@ Sequencer and deliberator of the robot (ROS 2 Jazzy, RPi 5). Architecture and de
 
 | Package | Content |
 | --- | --- |
-| `robot_verification` | Link check, and the pass/fail criterion of each bench verification on a `ros2 bag` (regression) |
+| `robot_verification` | Link check, link load measurement, and the pass/fail criterion of each bench verification on a `ros2 bag` (regression) |
 
 Build in a colcon workspace together with `robot-interfaces`: `colcon build --symlink-install`.
 

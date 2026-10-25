@@ -15,14 +15,15 @@ setup(
     maintainer='Lucas Vieira',
     maintainer_email='lucasfranciscovieira@gmail.com',
     description=(
-        'Bench checks: the link check and the pass/fail criteria of the '
-        'verifications on ros2 bags.'
+        'Bench checks and measurements: the link check, the link load and the pass/fail '
+        'criteria of the verifications on ros2 bags.'
     ),
     license='Proprietary',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'check_link = robot_verification.check_link:main',
+            'measure_link_load = robot_verification.measure_link_load:main',
         ],
     },
 )
