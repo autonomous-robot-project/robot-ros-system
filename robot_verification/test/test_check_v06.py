@@ -1,26 +1,14 @@
 """Unit tests of the V-06 criterion on synthetic command and state streams."""
 
-from types import SimpleNamespace
-
-from robot_verification.check_v06 import EXPECTED_GAPS, V06, Recording, Sample, Verdict
+from robot_verification.check_v06 import EXPECTED_GAPS, V06, Recording
+from robot_verification.recording import Sample, Verdict
+from synthetic import command, instrumentation, state
 
 COMMAND_PERIOD_S = 0.05  # 20 Hz
 STATE_PERIOD_S = 0.01  # 100 Hz
 RUN_S = 1.0  # commands published before each interruption
 PAUSE_S = 2.0  # no command after each interruption
 INSTRUMENTATION_PERIOD_S = 0.1  # 10 Hz
-
-
-def command(linear=0.2):
-    return SimpleNamespace(behavior=0, linear=linear, angular=0.0, theta=0.0, x=0.0, y=0.0)
-
-
-def state(echo):
-    return SimpleNamespace(faults=0, reflexes=0, echo=echo)
-
-
-def instrumentation(expiries, expiry_delay_s):
-    return SimpleNamespace(expiries=expiries, expiry_delay_us=round(expiry_delay_s * 1e6))
 
 
 def run(

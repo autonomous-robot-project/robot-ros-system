@@ -21,9 +21,10 @@ Usage: check_v06 <bag directory>. Exit code: 0 pass, 1 fail, 2 invalid run.
 """
 
 from dataclasses import dataclass
-from enum import Enum
 import math
 import sys
+
+from robot_verification.recording import Sample, Stream, Verdict, read_bag
 
 # Parameters of V-06.
 T_CMD_S = 0.200
@@ -40,22 +41,6 @@ COMMAND_TOPIC = '/controller/command'
 STATE_TOPIC = '/controller/state'
 INSTRUMENTATION_TOPIC = '/controller/instrumentation'
 TWIST = 0  # Command.TWIST
-
-
-class Verdict(Enum):
-    """Outcome of the run; the value is the exit code."""
-
-    PASS = 0
-    FAIL = 1
-    INVALID = 2
-
-
-@dataclass(frozen=True)
-class Sample:
-    """A recorded message and its reception time."""
-
-    time_s: float
-    message: object
 
 
 @dataclass(frozen=True)
@@ -88,31 +73,20 @@ class Recording:
     """The commands, states and instrumentation of a V-06 run, in reception order."""
 
     def __init__(self, commands, states, instrumentation):
-        self.commands = commands
-        self.states = states
-        self.instrumentation = instrumentation
+        self.commands = Stream(commands)
+        self.states = Stream(states)
+        self.instrumentation = Stream(instrumentation)
 
     @classmethod
     def from_bag(cls, path):
         # ROS imports here, so the criterion can be tested without ROS.
-        from rclpy.serialization import deserialize_message
         from robot_interfaces.msg import Command, Instrumentation, State
-        import rosbag2_py
 
-        reader = rosbag2_py.SequentialReader()
-        reader.open(rosbag2_py.StorageOptions(uri=path), rosbag2_py.ConverterOptions('', ''))
-        message_types = {
-            COMMAND_TOPIC: Command,
-            STATE_TOPIC: State,
-            INSTRUMENTATION_TOPIC: Instrumentation,
-        }
-        samples = {topic: [] for topic in message_types}
-        while reader.has_next():
-            topic, data, time_ns = reader.read_next()
-            if topic in message_types:
-                message = deserialize_message(data, message_types[topic])
-                samples[topic].append(Sample(time_ns * 1e-9, message))
-        return cls(samples[COMMAND_TOPIC], samples[STATE_TOPIC], samples[INSTRUMENTATION_TOPIC])
+        streams = read_bag(
+            path,
+            {COMMAND_TOPIC: Command, STATE_TOPIC: State, INSTRUMENTATION_TOPIC: Instrumentation},
+        )
+        return cls(streams[COMMAND_TOPIC], streams[STATE_TOPIC], streams[INSTRUMENTATION_TOPIC])
 
     def gaps(self):
         """Every interval longer than T_CMD without commands, the one after the last included."""
@@ -122,18 +96,6 @@ class Recording:
             for command, next_s in zip(self.commands, next_command_times_s, strict=True)
             if next_s - command.time_s > T_CMD_S
         ]
-
-    def states_between(self, start_s, end_s):
-        """Return the states received after start_s and before end_s."""
-        return [s for s in self.states if start_s < s.time_s < end_s]
-
-    def state_at(self, time_s):
-        """Return the latest state received up to time_s, or None."""
-        return next((s for s in reversed(self.states) if s.time_s <= time_s), None)
-
-    def instrumentation_at(self, time_s):
-        """Return the latest instrumentation received up to time_s, or None."""
-        return next((s for s in reversed(self.instrumentation) if s.time_s <= time_s), None)
 
 
 class V06:
@@ -162,20 +124,20 @@ class V06:
             return False
         held = [
             s
-            for s in self.recording.states_between(gap.start_s, gap.end_s)
+            for s in self.recording.states.between(gap.start_s, gap.end_s)
             if s.time_s >= first_stop.time_s
         ]
         return all(is_stop(s.message.echo) for s in held)
 
     def command_was_echoed(self, gap):
         """Check validity: the controller was applying the last command when commands stopped."""
-        state = self.recording.state_at(gap.start_s)
+        state = self.recording.states.at(gap.start_s)
         return state is not None and is_same_command(state.message.echo, gap.last_command.message)
 
     def instrumentation_covers(self, gap):
         """Check validity: the counter was recorded before the gap and after its expiry."""
-        before = self.recording.instrumentation_at(gap.start_s)
-        after = self.recording.instrumentation_at(gap.end_s)
+        before = self.recording.instrumentation.at(gap.start_s)
+        after = self.recording.instrumentation.at(gap.end_s)
         return (
             before is not None
             and after is not None
@@ -222,12 +184,12 @@ class V06:
 
     def _instrumentation_around(self, gap):
         return (
-            self.recording.instrumentation_at(gap.start_s),
-            self.recording.instrumentation_at(gap.end_s),
+            self.recording.instrumentation.at(gap.start_s),
+            self.recording.instrumentation.at(gap.end_s),
         )
 
     def _first_stop(self, gap):
-        states = self.recording.states_between(gap.start_s, gap.end_s)
+        states = self.recording.states.between(gap.start_s, gap.end_s)
         return next((s for s in states if is_stop(s.message.echo)), None)
 
 
