@@ -1,7 +1,7 @@
 """
 V-02: cognizant failure (RF-02), evaluated on the ros2 bag recorded by run_v02.
 
-Criterion: the failure code is active during each power cut of the left motor and inactive
+Criterion: the failure code is active during each power cut of the motors and inactive
 outside them, including the start, with no clear command. After the infinite-loop injection, the
 State brings the code "restart by watchdog" (ADR 029).
 

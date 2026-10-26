@@ -1,8 +1,8 @@
 """
 V-02 procedure on the bench: conducts the trial and records the ros2 bag that check_v02 judges.
 
-Steps of V-02: record the State; TWIST(v_r, 0) to steady state; cut the supply (VM) of the left
-motor with the switch for 3 s and restore it, three times; touch GPIO 38 to GND for an instant
+Steps of V-02: record the State; TWIST(v_r, 0) to steady state; cut the supply (VM) of the
+motors with the switch for 3 s and restore it, three times; touch GPIO 11 to GND for an instant
 (watchdog test trigger) and wait for the restart; stop the recording.
 
 Each cut, restore and injection is announced on the terminal and marked in the bag
@@ -114,7 +114,7 @@ class V02Procedure:
         self._inject()
 
     def _cut(self, number):
-        countdown(f'cut {number} of {EXPECTED_CUTS}: switch OFF the supply of the LEFT motor')
+        countdown(f'cut {number} of {EXPECTED_CUTS}: switch OFF the supply of the motors')
         self._trial.mark(CUT)
         announce('OFF NOW')
         # The end of the cut is the countdown to restore it, so the operator never restores early.
@@ -125,7 +125,7 @@ class V02Procedure:
         time.sleep(STEADY_STATE_S)
 
     def _inject(self):
-        countdown('watchdog: touch GPIO 38 to GND for an instant')
+        countdown('watchdog: touch GPIO 11 to GND for an instant')
         self._trial.mark(INJECT)
         announce('TOUCH NOW')
         time.sleep(RESTART_WAIT_S)
