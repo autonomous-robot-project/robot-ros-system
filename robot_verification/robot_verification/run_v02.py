@@ -1,11 +1,11 @@
 """
 V-02 procedure on the bench: conducts the trial and records the ros2 bag that check_v02 judges.
 
-Steps of V-02: record the State; TWIST(v_r, 0) to steady state; lock the left wheel by hand for
-2 s and release it, three times; touch GPIO 38 to GND for an instant (watchdog test trigger) and
-wait for the restart; stop the recording.
+Steps of V-02: record the State; TWIST(v_r, 0) to steady state; cut the supply (VM) of the left
+motor with the switch for 3 s and restore it, three times; touch GPIO 38 to GND for an instant
+(watchdog test trigger) and wait for the restart; stop the recording.
 
-Each lock, release and injection is announced on the terminal and marked in the bag
+Each cut, restore and injection is announced on the terminal and marked in the bag
 (/verification/v02_marker), because check_v02 judges the failure code against these windows and
 not against the measured speed, which the controller itself uses.
 
@@ -29,11 +29,11 @@ from robot_interfaces.msg import Command  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
 from robot_verification.check_v02 import (  # noqa: E402
-    EXPECTED_STALLS,
+    CUT,
+    EXPECTED_CUTS,
     INJECT,
     MARKER_TOPIC,
-    RELEASE,
-    STALL,
+    RESTORE,
     V_R,
 )
 from robot_verification.link import LINK_QOS, MicroRosAgent  # noqa: E402
@@ -48,7 +48,7 @@ RECORDED_TOPICS = [
 ]
 SESSION_UP_S = 5.0  # agent and recorder up, session of the ESP32 established
 STEADY_STATE_S = 5.0  # V-02 step 2, well beyond the settling time
-STALL_S = 2.0  # V-02 step 3
+CUT_S = 3.0  # V-02 step 3
 COUNTDOWN_S = 3
 RESTART_WAIT_S = 15.0  # restart, reconnection of the session and the code of the watchdog
 
@@ -109,17 +109,19 @@ class V02Procedure:
     def run(self):
         announce(f'TWIST({V_R}, 0): wait for the steady state')
         time.sleep(STEADY_STATE_S)
-        for number in range(1, EXPECTED_STALLS + 1):
-            self._stall(number)
+        for number in range(1, EXPECTED_CUTS + 1):
+            self._cut(number)
         self._inject()
 
-    def _stall(self, number):
-        countdown(f'stall {number} of {EXPECTED_STALLS}: lock the LEFT wheel')
-        self._trial.mark(STALL)
-        announce('LOCK NOW')
-        time.sleep(STALL_S)
-        self._trial.mark(RELEASE)
-        announce('RELEASE NOW')
+    def _cut(self, number):
+        countdown(f'cut {number} of {EXPECTED_CUTS}: switch OFF the supply of the LEFT motor')
+        self._trial.mark(CUT)
+        announce('OFF NOW')
+        # The end of the cut is the countdown to restore it, so the operator never restores early.
+        time.sleep(CUT_S - COUNTDOWN_S)
+        countdown('switch it back ON only at NOW')
+        self._trial.mark(RESTORE)
+        announce('ON NOW')
         time.sleep(STEADY_STATE_S)
 
     def _inject(self):
