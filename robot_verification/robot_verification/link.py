@@ -66,6 +66,9 @@ class BagRecorder:
     """`ros2 bag record` of the given topics, as a child process."""
 
     def __init__(self, path, topics):
+        # ros2 bag refuses an existing directory, and its error would be lost with stderr.
+        if os.path.exists(path):
+            raise FileExistsError(f'bag directory already exists: {path}')
         self._command = ['ros2', 'bag', 'record', '-s', 'mcap', '-o', path, *topics]
         self._process = None
 
