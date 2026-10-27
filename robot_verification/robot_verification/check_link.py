@@ -1,6 +1,8 @@
 """
 Bench check of the link: the controller state arrives, and arrives again after an agent restart.
 
+Criticality: T2, product (robot-docs codigo.md).
+
 Run at the start of each bench session and after any ROS update. A crash of the agent on the
 first message from the ESP32 is the symptom of an agent built against older ROS libraries
 (ADR 043, robot-docs nota 0005). The restart exercises the session rebuild of the ESP32.

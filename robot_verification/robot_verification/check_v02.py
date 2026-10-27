@@ -1,6 +1,8 @@
 """
 V-02: cognizant failure (RF-02), evaluated on the ros2 bag recorded by run_v02.
 
+Criticality: T1, evidence (robot-docs codigo.md).
+
 Criterion: the failure code is active during each power cut of the motors and inactive
 outside them, including the start, with no clear command. After the infinite-loop injection, the
 State brings the code "restart by watchdog" (ADR 029).
@@ -29,7 +31,7 @@ from dataclasses import dataclass
 import math
 import sys
 
-from robot_verification.recording import Sample, Stream, Verdict, read_bag
+from robot_verification.recording import Sample, Stream, Verdict, is_close_float32, read_bag
 
 # Parameters of V-02.
 V_R = 0.2  # m/s, commanded in the trial
@@ -78,7 +80,7 @@ def watchdog_restart(state):
 
 def echoes_trial_command(state):
     echo = state.message.echo
-    return echo.behavior == TWIST and math.isclose(echo.linear, V_R) and echo.angular == 0.0
+    return echo.behavior == TWIST and is_close_float32(echo.linear, V_R) and echo.angular == 0.0
 
 
 class Recording:

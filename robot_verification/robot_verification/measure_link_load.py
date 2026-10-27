@@ -1,6 +1,8 @@
 """
 Bench measurement of the link load (ADR 025): bytes per second in each direction of the UART.
 
+Criticality: T1, evidence (robot-docs codigo.md).
+
 The kernel counts the bytes of each serial port; the difference over DURATION_S gives the rate,
 reported as a fraction of the UART capacity. The UART is full duplex, so the 50 % budget applies
 to each direction. Start the agent and the load (e.g. the command at 20 Hz) before running this.

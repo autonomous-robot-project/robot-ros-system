@@ -1,6 +1,8 @@
 """
 V-02 procedure on the bench: conducts the trial and records the ros2 bag that check_v02 judges.
 
+Criticality: T2, product (robot-docs codigo.md).
+
 Steps of V-02: record the State; TWIST(v_r, 0) to steady state; cut the supply (VM) of the
 motors with the switch for 3 s and restore it, three times; touch GPIO 11 to GND for an instant
 (watchdog test trigger) and wait for the restart; stop the recording.
@@ -17,8 +19,6 @@ import os
 # Fast DDS only on UDP (ADR 045), set before ROS starts, so the agent and the recorder inherit it.
 os.environ['FASTDDS_BUILTIN_TRANSPORTS'] = 'UDPv4'
 
-import signal  # noqa: E402
-import subprocess  # noqa: E402
 import sys  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
@@ -36,7 +36,7 @@ from robot_verification.check_v02 import (  # noqa: E402
     RESTORE,
     V_R,
 )
-from robot_verification.link import LINK_QOS, MicroRosAgent  # noqa: E402
+from robot_verification.link import LINK_QOS, BagRecorder, MicroRosAgent  # noqa: E402
 
 COMMAND_TOPIC = '/controller/command'
 COMMAND_PERIOD_S = 0.05  # 20 Hz
@@ -79,25 +79,6 @@ class TrialNode:
 
     def _publish_command(self):
         self._commands.publish(self._command)
-
-
-class BagRecorder:
-    """`ros2 bag record` of the topics of the trial, as a child process."""
-
-    def __init__(self, path):
-        self._command = ['ros2', 'bag', 'record', '-s', 'mcap', '-o', path, *RECORDED_TOPICS]
-        self._process = None
-
-    def __enter__(self):
-        self._process = subprocess.Popen(
-            self._command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        return self
-
-    def __exit__(self, *_exception):
-        # SIGINT closes the bag properly; the recorder is a direct child, so it receives it.
-        self._process.send_signal(signal.SIGINT)
-        self._process.wait()
 
 
 class V02Procedure:
@@ -148,7 +129,7 @@ def main():
         sys.exit(2)
     rclpy.init()
     try:
-        with MicroRosAgent(), BagRecorder(sys.argv[1]), TrialNode() as trial:
+        with MicroRosAgent(), BagRecorder(sys.argv[1], RECORDED_TOPICS), TrialNode() as trial:
             announce('V-02: agent and recorder up; wheels suspended?')
             time.sleep(SESSION_UP_S)
             V02Procedure(trial).run()

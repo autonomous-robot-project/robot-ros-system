@@ -1,6 +1,11 @@
-"""The link to the controller, shared by the bench scripts: its QoS and the micro-ROS agent."""
+"""
+The link to the controller, shared by the bench scripts: QoS, micro-ROS agent, bag recorder.
+
+Criticality: T2, product (robot-docs codigo.md).
+"""
 
 import os
+import signal
 import subprocess
 
 from ament_index_python.packages import get_package_prefix
@@ -55,3 +60,22 @@ class MicroRosAgent:
             return None
         _, stderr = self._process.communicate()
         return f'agent exited with code {self._process.returncode}: {stderr.strip()}'
+
+
+class BagRecorder:
+    """`ros2 bag record` of the given topics, as a child process."""
+
+    def __init__(self, path, topics):
+        self._command = ['ros2', 'bag', 'record', '-s', 'mcap', '-o', path, *topics]
+        self._process = None
+
+    def __enter__(self):
+        self._process = subprocess.Popen(
+            self._command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        return self
+
+    def __exit__(self, *_exception):
+        # SIGINT closes the bag properly; the recorder is a direct child, so it receives it.
+        self._process.send_signal(signal.SIGINT)
+        self._process.wait()

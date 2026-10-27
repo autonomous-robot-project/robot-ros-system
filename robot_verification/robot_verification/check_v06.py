@@ -1,6 +1,8 @@
 """
 V-06: command expiry (RNF-02), evaluated on the ros2 bag of the run.
 
+Criticality: T1, evidence (robot-docs codigo.md).
+
 Criterion: in each interruption, the expiry counter of the Instrumentation rises exactly once,
 and the expiry delay measured in the controller (from the reception of the last command to the
 cycle that expired it) is at most T_CMD + T_C (210 ms). TWIST(0, 0) stays in the echo until a new
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 import math
 import sys
 
-from robot_verification.recording import Sample, Stream, Verdict, read_bag
+from robot_verification.recording import ControllerRecording, Sample, Verdict
 
 # Parameters of V-06.
 T_CMD_S = 0.200
@@ -37,9 +39,6 @@ INSTRUMENTATION_PERIOD_S = 0.100  # 10 Hz (ADR 025)
 # link latency. An Instrumentation received this long after the last command must count it.
 EXPIRY_REPORTED_WITHIN_S = MAX_EXPIRY_DELAY_S + 2 * INSTRUMENTATION_PERIOD_S
 
-COMMAND_TOPIC = '/controller/command'
-STATE_TOPIC = '/controller/state'
-INSTRUMENTATION_TOPIC = '/controller/instrumentation'
 TWIST = 0  # Command.TWIST
 
 
@@ -69,33 +68,14 @@ def is_same_command(echo, command):
     )
 
 
-class Recording:
-    """The commands, states and instrumentation of a V-06 run, in reception order."""
-
-    def __init__(self, commands, states, instrumentation):
-        self.commands = Stream(commands)
-        self.states = Stream(states)
-        self.instrumentation = Stream(instrumentation)
-
-    @classmethod
-    def from_bag(cls, path):
-        # ROS imports here, so the criterion can be tested without ROS.
-        from robot_interfaces.msg import Command, Instrumentation, State
-
-        streams = read_bag(
-            path,
-            {COMMAND_TOPIC: Command, STATE_TOPIC: State, INSTRUMENTATION_TOPIC: Instrumentation},
-        )
-        return cls(streams[COMMAND_TOPIC], streams[STATE_TOPIC], streams[INSTRUMENTATION_TOPIC])
-
-    def gaps(self):
-        """Every interval longer than T_CMD without commands, the one after the last included."""
-        next_command_times_s = [c.time_s for c in self.commands[1:]] + [math.inf]
-        return [
-            CommandGap(command, next_s)
-            for command, next_s in zip(self.commands, next_command_times_s, strict=True)
-            if next_s - command.time_s > T_CMD_S
-        ]
+def command_gaps(commands):
+    """Every interval longer than T_CMD without commands, the one after the last included."""
+    next_command_times_s = [c.time_s for c in commands[1:]] + [math.inf]
+    return [
+        CommandGap(command, next_s)
+        for command, next_s in zip(commands, next_command_times_s, strict=True)
+        if next_s - command.time_s > T_CMD_S
+    ]
 
 
 class V06:
@@ -103,7 +83,7 @@ class V06:
 
     def __init__(self, recording):
         self.recording = recording
-        all_gaps = recording.gaps()
+        all_gaps = command_gaps(recording.commands)
         self.gaps = [g for g in all_gaps if g.end_s - g.start_s > PROCEDURE_GAP_MIN_S]
         self.publisher_pauses = [g for g in all_gaps if g.end_s - g.start_s <= PROCEDURE_GAP_MIN_S]
 
@@ -197,7 +177,7 @@ def main():
     if len(sys.argv) != 2:
         print('usage: check_v06 <bag directory>')
         sys.exit(Verdict.INVALID.value)
-    v06 = V06(Recording.from_bag(sys.argv[1]))
+    v06 = V06(ControllerRecording.from_bag(sys.argv[1]))
     print(v06.report())
     sys.exit(v06.verdict.value)
 

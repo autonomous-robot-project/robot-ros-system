@@ -1,7 +1,7 @@
 """Unit tests of the V-06 criterion on synthetic command and state streams."""
 
-from robot_verification.check_v06 import EXPECTED_GAPS, V06, Recording
-from robot_verification.recording import Sample, Verdict
+from robot_verification.check_v06 import EXPECTED_GAPS, V06
+from robot_verification.recording import ControllerRecording, Sample, Verdict
 from synthetic import command, instrumentation, state
 
 COMMAND_PERIOD_S = 0.05  # 20 Hz
@@ -67,38 +67,38 @@ def instrumentation_stream(end_s, expiry_times, expiry_delay_s, recorded):
 
 
 def test_pass_when_expiry_within_limit():
-    v06 = V06(Recording(*run(expiry_delay_s=0.205)))
+    v06 = V06(ControllerRecording(*run(expiry_delay_s=0.205)))
     assert v06.verdict == Verdict.PASS
     assert len(v06.gaps) == EXPECTED_GAPS
 
 
 def test_fail_when_expiry_too_late():
-    assert V06(Recording(*run(expiry_delay_s=0.215))).verdict == Verdict.FAIL
+    assert V06(ControllerRecording(*run(expiry_delay_s=0.215))).verdict == Verdict.FAIL
 
 
 def test_fail_when_counter_does_not_rise():
-    assert V06(Recording(*run(expiries_per_gap=0))).verdict == Verdict.FAIL
+    assert V06(ControllerRecording(*run(expiries_per_gap=0))).verdict == Verdict.FAIL
 
 
 def test_fail_when_stop_does_not_persist():
-    assert V06(Recording(*run(relapse=True))).verdict == Verdict.FAIL
+    assert V06(ControllerRecording(*run(relapse=True))).verdict == Verdict.FAIL
 
 
 def test_invalid_when_controller_ignores_commands():
-    assert V06(Recording(*run(ignore_commands=True))).verdict == Verdict.INVALID
+    assert V06(ControllerRecording(*run(ignore_commands=True))).verdict == Verdict.INVALID
 
 
 def test_invalid_with_wrong_number_of_gaps():
-    assert V06(Recording(*run(gaps=2))).verdict == Verdict.INVALID
+    assert V06(ControllerRecording(*run(gaps=2))).verdict == Verdict.INVALID
 
 
 def test_invalid_without_instrumentation():
-    assert V06(Recording(*run(record_instrumentation=False))).verdict == Verdict.INVALID
+    assert V06(ControllerRecording(*run(record_instrumentation=False))).verdict == Verdict.INVALID
 
 
 def test_publisher_pause_is_not_an_interruption():
     commands, states, instrumentation_samples = run()
     paused = [c for c in commands if not 0.3 < c.time_s < 0.65]  # a 0.45 s gap in the first run
-    v06 = V06(Recording(paused, states, instrumentation_samples))
+    v06 = V06(ControllerRecording(paused, states, instrumentation_samples))
     assert v06.verdict == Verdict.PASS
     assert len(v06.publisher_pauses) == 1

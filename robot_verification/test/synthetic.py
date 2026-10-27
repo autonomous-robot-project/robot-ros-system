@@ -1,5 +1,6 @@
 """Synthetic messages and streams shared by the unit tests of the verification scripts."""
 
+import struct
 from types import SimpleNamespace
 
 from robot_verification.recording import Sample
@@ -7,20 +8,32 @@ from robot_verification.recording import Sample
 TWIST = 0  # Command.TWIST
 
 
+def to_float32(value):
+    """Round to float32, as the float32 fields of the messages arrive from the bag."""
+    return struct.unpack('f', struct.pack('f', value))[0]
+
+
 def command(linear=0.2, angular=0.0):
-    return SimpleNamespace(behavior=TWIST, linear=linear, angular=angular, theta=0.0, x=0.0, y=0.0)
+    return SimpleNamespace(
+        behavior=TWIST,
+        linear=to_float32(linear),
+        angular=to_float32(angular),
+        theta=0.0,
+        x=0.0,
+        y=0.0,
+    )
 
 
 def state(echo, faults=0):
     return SimpleNamespace(faults=faults, reflexes=0, echo=echo)
 
 
-def instrumentation(expiries=0, expiry_delay_s=0.0, left_wheel_speed=0.0):
+def instrumentation(expiries=0, expiry_delay_s=0.0, left_wheel_speed=0.0, right_wheel_speed=0.0):
     return SimpleNamespace(
         expiries=expiries,
         expiry_delay_us=round(expiry_delay_s * 1e6),
         left_wheel_speed=left_wheel_speed,
-        right_wheel_speed=0.0,
+        right_wheel_speed=right_wheel_speed,
     )
 
 
