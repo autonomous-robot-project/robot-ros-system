@@ -17,11 +17,13 @@ import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from nav_msgs.msg import Odometry
     from robot_interfaces.msg import Command, Instrumentation, State
 
 COMMAND_TOPIC = '/controller/command'
 STATE_TOPIC = '/controller/state'
 INSTRUMENTATION_TOPIC = '/controller/instrumentation'
+ODOMETRY_TOPIC = '/controller/odometry'
 
 # The float32 fields of the messages keep ~7 significant digits: 0.2 arrives as 0.20000000298.
 FLOAT32_RELATIVE_TOLERANCE = 1e-6
@@ -89,25 +91,38 @@ def read_bag(path: str, message_types: dict[str, type]) -> dict[str, Stream]:
 
 
 class ControllerRecording:
-    """The commands, states and instrumentation of a run, in reception order."""
+    """The commands, states, instrumentation and odometry of a run, in reception order."""
 
     def __init__(
         self,
         commands: Iterable[Sample[Command]],
         states: Iterable[Sample[State]],
         instrumentation: Iterable[Sample[Instrumentation]],
+        odometry: Iterable[Sample[Odometry]] = (),
     ):
         self.commands: Stream[Command] = Stream(commands)
         self.states: Stream[State] = Stream(states)
         self.instrumentation: Stream[Instrumentation] = Stream(instrumentation)
+        self.odometry: Stream[Odometry] = Stream(odometry)
 
     @classmethod
     def from_bag(cls, path: str) -> ControllerRecording:
         # ROS imports here, so the criteria can be tested without ROS.
+        from nav_msgs.msg import Odometry
         from robot_interfaces.msg import Command, Instrumentation, State
 
         streams = read_bag(
             path,
-            {COMMAND_TOPIC: Command, STATE_TOPIC: State, INSTRUMENTATION_TOPIC: Instrumentation},
+            {
+                COMMAND_TOPIC: Command,
+                STATE_TOPIC: State,
+                INSTRUMENTATION_TOPIC: Instrumentation,
+                ODOMETRY_TOPIC: Odometry,
+            },
         )
-        return cls(streams[COMMAND_TOPIC], streams[STATE_TOPIC], streams[INSTRUMENTATION_TOPIC])
+        return cls(
+            streams[COMMAND_TOPIC],
+            streams[STATE_TOPIC],
+            streams[INSTRUMENTATION_TOPIC],
+            streams[ODOMETRY_TOPIC],
+        )

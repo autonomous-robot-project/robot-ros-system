@@ -3,10 +3,10 @@ Analysis of the TURN_TO, GO_TO and reversal bench runs (robot-docs nota 0014), f
 
 Criticality: T1, evidence (robot-docs codigo.md).
 
-What: for each constant command, the pose at its end; the runaways (a wheel read above 0.3 m/s,
-more than v_max + omega_max b/2 allows in these runs) and the reading of both wheels during each
-reverse phase; the FAULT_COGNIZANT intervals; the deadlines. With --series, the readings every
-0.2 s.
+What: the pose at the end of each constant command; the readings of both wheels in each reverse
+phase; the runaways; the FAULT_COGNIZANT intervals; the deadlines. With --series, the readings
+every SERIES_STEP_S.
+How: the bag through ControllerRecording, one class for the measurements and one for the report.
 Why: the lost direction of ADR 019 at T_vel = 0.51 s, and its absence at 0.3 s.
 
 Usage: python3 analyze_behaviors.py <bag directory> [--series]. Run with the ROS environment.
@@ -17,24 +17,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import sys
+from typing import TYPE_CHECKING
 
-from nav_msgs.msg import Odometry
-from robot_interfaces.msg import Command, Instrumentation, State
-from robot_verification.recording import Stream, read_bag
+from robot_verification.measure_closed_loop import Wheel, get_wheel_speed
+from robot_verification.recording import ControllerRecording, Sample, Stream
 
-TOPICS = {
-    '/controller/command': Command,
-    '/controller/state': State,
-    '/controller/instrumentation': Instrumentation,
-    '/controller/odometry': Odometry,
-}
-RUNAWAY_SPEED = 0.3  # m/s, above any legitimate wheel speed of these runs
-REVERSE = -0.15  # m/s, the reverse phase of reversal_bench and behaviors_series
-SETTLED_AFTER_S = 0.8  # from the reverse command to both wheels expected negative
-EPISODE_GAP_S = 1.0
-SERIES_STEP_S = 0.2
-FAULT_COGNIZANT = 1
-BEHAVIOR_NAMES = ('TWIST', 'TURN_TO', 'GO_TO')
+if TYPE_CHECKING:
+    from nav_msgs.msg import Odometry
+    from robot_interfaces.msg import Command, Instrumentation, State
+
+# A wheel read faster than this ran away: above v_max + omega_max b/2 = 0.4 m/s with margin for the
+# ramp, and above the 0.15 m/s of the reversals.
+RUNAWAY_SPEED: float = 0.3  # m/s
+EPISODE_GAP_S: float = 1.0  # readings farther apart are separate episodes
+# The reverse phase of reversal_bench and behaviors_series; both wheels are expected negative from
+# SETTLED_AFTER_S after its first command to one Instrumentation period after its last.
+REVERSE: float = -0.15  # m/s
+SETTLED_AFTER_S: float = 0.8
+INSTRUMENTATION_PERIOD_S: float = 0.05  # half of the 10 Hz period, to take the last reading
+SERIES_STEP_S: float = 0.2
+
+TWIST: int = 0  # Command.TWIST
+FAULT_COGNIZANT: int = 1  # State.FAULT_COGNIZANT
+BEHAVIOR_NAMES: tuple[str, ...] = ('TWIST', 'TURN_TO', 'GO_TO')
+WHEEL_LABELS: dict[Wheel, str] = {Wheel.LEFT: 'L', Wheel.RIGHT: 'R'}
 
 
 @dataclass(frozen=True)
@@ -46,145 +52,216 @@ class Phase:
     end_s: float
 
 
+@dataclass(frozen=True)
+class RunawayEpisode:
+    """Consecutive readings of one wheel above RUNAWAY_SPEED."""
+
+    wheel: Wheel
+    start_s: float
+    end_s: float
+
+
+@dataclass(frozen=True)
+class FaultInterval:
+    start_s: float
+    duration_s: float
+
+
 def get_heading(odometry: Odometry) -> float:
     orientation = odometry.pose.pose.orientation
     return 2.0 * math.atan2(orientation.z, orientation.w)
 
 
-def is_same_command(a: Command, b: Command) -> bool:
-    return (a.behavior, a.linear, a.angular, a.theta, a.x, a.y) == (
-        b.behavior,
-        b.linear,
-        b.angular,
-        b.theta,
-        b.x,
-        b.y,
-    )
+def get_command_values(command: Command) -> tuple[int, float, float, float, float, float]:
+    return (command.behavior, command.linear, command.angular, command.theta, command.x, command.y)
+
+
+def is_reverse_phase(phase: Phase) -> bool:
+    command = phase.command
+    return command.behavior == TWIST and math.isclose(command.linear, REVERSE, rel_tol=1e-6)
+
+
+def is_fault_active(state: Sample[State]) -> bool:
+    return bool(state.message.faults & FAULT_COGNIZANT)
 
 
 def split_into_phases(commands: Stream[Command]) -> list[Phase]:
     phases: list[Phase] = []
     for sample in commands:
-        if phases and is_same_command(phases[-1].command, sample.message):
+        continues_phase = bool(phases) and get_command_values(
+            phases[-1].command
+        ) == get_command_values(sample.message)
+        if continues_phase:
             phases[-1] = Phase(phases[-1].command, phases[-1].start_s, sample.time_s)
         else:
             phases.append(Phase(sample.message, sample.time_s, sample.time_s))
     return phases
 
 
-def find_runaways(instrumentation: Stream[Instrumentation]) -> list[tuple[float, float, str]]:
-    """Return each runaway episode: start, end and wheel."""
-    episodes: list[tuple[float, float, str]] = []
+def find_runaways_of(
+    instrumentation: Stream[Instrumentation], wheel: Wheel
+) -> list[RunawayEpisode]:
+    episodes: list[RunawayEpisode] = []
     for sample in instrumentation:
-        for wheel, speed in (
-            ('L', sample.message.left_wheel_speed),
-            ('R', sample.message.right_wheel_speed),
-        ):
-            if abs(speed) <= RUNAWAY_SPEED:
-                continue
-            last = episodes[-1] if episodes else None
-            if last and last[2] == wheel and sample.time_s - last[1] < EPISODE_GAP_S:
-                episodes[-1] = (last[0], sample.time_s, wheel)
-            else:
-                episodes.append((sample.time_s, sample.time_s, wheel))
+        if abs(get_wheel_speed(sample, wheel)) <= RUNAWAY_SPEED:
+            continue
+        if episodes and sample.time_s - episodes[-1].end_s < EPISODE_GAP_S:
+            episodes[-1] = RunawayEpisode(wheel, episodes[-1].start_s, sample.time_s)
+        else:
+            episodes.append(RunawayEpisode(wheel, sample.time_s, sample.time_s))
     return episodes
 
 
-def find_fault_intervals(states: Stream[State]) -> list[tuple[float, float]]:
-    """Return each FAULT_COGNIZANT interval: start and duration."""
-    intervals: list[tuple[float, float]] = []
-    start: float | None = None
-    for sample in states:
-        active = bool(sample.message.faults & FAULT_COGNIZANT)
-        if active and start is None:
-            start = sample.time_s
-        if not active and start is not None:
-            intervals.append((start, sample.time_s - start))
-            start = None
+def find_fault_intervals(states: Stream[State]) -> list[FaultInterval]:
+    intervals: list[FaultInterval] = []
+    start_s: float | None = None
+    for state in states:
+        if is_fault_active(state) and start_s is None:
+            start_s = state.time_s
+        if not is_fault_active(state) and start_s is not None:
+            intervals.append(FaultInterval(start_s, state.time_s - start_s))
+            start_s = None
     return intervals
 
 
-def report(streams: dict[str, Stream], series: bool) -> list[str]:
-    commands, states = streams['/controller/command'], streams['/controller/state']
-    instrumentation, odometry = (
-        streams['/controller/instrumentation'],
-        streams['/controller/odometry'],
-    )
-    origin_s = commands[0].time_s
-    lines: list[str] = []
-    phases = split_into_phases(commands)
-    for phase in phases:
-        end = odometry.at(phase.end_s).message
+class BehaviorsRun:
+    """The quantities measured on the recording of a bench run."""
+
+    def __init__(self, recording: ControllerRecording):
+        self.recording: ControllerRecording = recording
+        self.phases: list[Phase] = split_into_phases(recording.commands)
+        self.origin_s: float = recording.commands[0].time_s
+
+    def get_end_pose(self, phase: Phase) -> Odometry:
+        return self.recording.odometry.at(phase.end_s).message
+
+    def select_reverse_phases(self) -> list[Phase]:
+        return [phase for phase in self.phases if is_reverse_phase(phase)]
+
+    def find_non_negative_readings(self, phase: Phase) -> list[Sample[Instrumentation]]:
+        """Return the readings of the reverse phase in which a wheel is not negative."""
+        readings = self.recording.instrumentation.between(
+            phase.start_s + SETTLED_AFTER_S, phase.end_s + INSTRUMENTATION_PERIOD_S
+        )
+        return [s for s in readings if any(get_wheel_speed(s, w) >= 0 for w in Wheel)]
+
+    def find_runaways(self) -> list[RunawayEpisode]:
+        episodes = [e for w in Wheel for e in find_runaways_of(self.recording.instrumentation, w)]
+        return sorted(episodes, key=lambda episode: episode.start_s)
+
+    def find_fault_intervals(self) -> list[FaultInterval]:
+        return find_fault_intervals(self.recording.states)
+
+    def measure_deadline_misses(self) -> int:
+        first, last = self.recording.instrumentation[0], self.recording.instrumentation[-1]
+        return last.message.deadline_misses - first.message.deadline_misses
+
+    def get_last_instrumentation(self) -> Instrumentation:
+        return self.recording.instrumentation[-1].message
+
+
+class BehaviorsReport:
+    """The report of a bench run: phases, reverse phases, runaways, faults and deadlines."""
+
+    def __init__(self, run: BehaviorsRun, series: bool):
+        self.run: BehaviorsRun = run
+        self.series: bool = series
+
+    def __str__(self) -> str:
+        lines = (
+            self._format_phase_lines()
+            + self._format_reverse_lines()
+            + self._format_runaway_and_fault_lines()
+            + [self._format_deadline_line()]
+        )
+        if self.series:
+            lines += self._format_series_lines()
+        return '\n'.join(lines)
+
+    def _format_phase_lines(self) -> list[str]:
+        return [self._format_phase_line(phase) for phase in self.run.phases]
+
+    def _format_phase_line(self, phase: Phase) -> str:
+        end = self.run.get_end_pose(phase)
         position = end.pose.pose.position
-        lines.append(
+        return (
             f'{BEHAVIOR_NAMES[phase.command.behavior]:7s} linear {phase.command.linear:+.2f} '
-            f'{phase.start_s - origin_s:6.1f}-{phase.end_s - origin_s:6.1f} s: end pose '
-            f'x {position.x:+.3f} y {position.y:+.3f} '
+            f'{self._since_origin(phase.start_s):6.1f}-{self._since_origin(phase.end_s):6.1f} s: '
+            f'end pose x {position.x:+.3f} y {position.y:+.3f} '
             f'theta {math.degrees(get_heading(end)):+.1f} deg'
         )
-    for phase in phases:
-        if phase.command.behavior != 0 or not math.isclose(
-            phase.command.linear, REVERSE, rel_tol=1e-6
-        ):
-            continue
-        readings = instrumentation.between(phase.start_s + SETTLED_AFTER_S, phase.end_s + 0.05)
-        non_negative = [
+
+    def _format_reverse_lines(self) -> list[str]:
+        return [self._format_reverse_line(phase) for phase in self.run.select_reverse_phases()]
+
+    def _format_reverse_line(self, phase: Phase) -> str:
+        readings = [
             (
                 round(s.time_s - phase.start_s, 1),
-                round(s.message.left_wheel_speed, 3),
-                round(s.message.right_wheel_speed, 3),
+                round(get_wheel_speed(s, Wheel.LEFT), 3),
+                round(get_wheel_speed(s, Wheel.RIGHT), 3),
             )
-            for s in readings
-            if s.message.left_wheel_speed >= 0 or s.message.right_wheel_speed >= 0
+            for s in self.run.find_non_negative_readings(phase)
         ]
-        lines.append(
-            f'reverse phase at {phase.start_s - origin_s:6.1f} s: '
-            f'non-negative readings {non_negative}'
+        return (
+            f'reverse phase at {self._since_origin(phase.start_s):6.1f} s: '
+            f'non-negative readings {readings}'
         )
-    runaways = [
-        (round(a - origin_s, 1), round(b - a, 1), wheel)
-        for a, b, wheel in find_runaways(instrumentation)
-    ]
-    lines.append(f'runaway episodes (start, duration, wheel): {runaways}')
-    faults = [(round(a - origin_s, 1), round(d, 2)) for a, d in find_fault_intervals(states)]
-    lines.append(f'FAULT_COGNIZANT intervals (start, duration): {faults}')
-    first, last = instrumentation[0].message, instrumentation[-1].message
-    lines.append(
-        f'C_max {last.max_execution_time_us} us, '
-        f'R_max {last.max_response_time_us} us (since boot), '
-        f'deadline misses in the recording {last.deadline_misses - first.deadline_misses}'
-    )
-    if series:
-        lines += format_series(streams, origin_s)
-    return lines
 
-
-def format_series(streams: dict[str, Stream], origin_s: float) -> list[str]:
-    states, instrumentation = streams['/controller/state'], streams['/controller/instrumentation']
-    odometry = streams['/controller/odometry']
-    end_s = streams['/controller/command'][-1].time_s
-    lines: list[str] = []
-    t = origin_s
-    while t <= end_s:
-        state, wheels, pose = states.at(t), instrumentation.at(t), odometry.at(t)
-        if state and wheels and pose:
-            lines.append(
-                f'{t - origin_s:5.1f} echo {state.message.echo.behavior} '
-                f'faults {state.message.faults} | '
-                f'theta {math.degrees(get_heading(pose.message)):+7.1f} | '
-                f'wheels L {wheels.message.left_wheel_speed:+.3f} '
-                f'R {wheels.message.right_wheel_speed:+.3f}'
+    def _format_runaway_and_fault_lines(self) -> list[str]:
+        runaways = [
+            (
+                round(self._since_origin(e.start_s), 1),
+                round(e.end_s - e.start_s, 1),
+                WHEEL_LABELS[e.wheel],
             )
-        t += SERIES_STEP_S
-    return lines
+            for e in self.run.find_runaways()
+        ]
+        faults = [
+            (round(self._since_origin(f.start_s), 1), round(f.duration_s, 2))
+            for f in self.run.find_fault_intervals()
+        ]
+        return [
+            f'runaway episodes (start, duration, wheel): {runaways}',
+            f'FAULT_COGNIZANT intervals (start, duration): {faults}',
+        ]
+
+    def _format_deadline_line(self) -> str:
+        last = self.run.get_last_instrumentation()
+        return (
+            f'C_max {last.max_execution_time_us} us, '
+            f'R_max {last.max_response_time_us} us (since boot), '
+            f'deadline misses in the recording {self.run.measure_deadline_misses()}'
+        )
+
+    def _format_series_lines(self) -> list[str]:
+        recording = self.run.recording
+        lines: list[str] = []
+        t = self.run.origin_s
+        while t <= recording.commands[-1].time_s:
+            state, wheels = recording.states.at(t), recording.instrumentation.at(t)
+            pose = recording.odometry.at(t)
+            if state and wheels and pose:
+                lines.append(
+                    f'{self._since_origin(t):5.1f} echo {state.message.echo.behavior} '
+                    f'faults {state.message.faults} | '
+                    f'theta {math.degrees(get_heading(pose.message)):+7.1f} | '
+                    f'wheels L {get_wheel_speed(wheels, Wheel.LEFT):+.3f} '
+                    f'R {get_wheel_speed(wheels, Wheel.RIGHT):+.3f}'
+                )
+            t += SERIES_STEP_S
+        return lines
+
+    def _since_origin(self, time_s: float) -> float:
+        return time_s - self.run.origin_s
 
 
 def main() -> None:
     if len(sys.argv) not in (2, 3):
-        print('usage: analyze_behaviors.py <bag directory> [--series]')
+        print('usage: python3 analyze_behaviors.py <bag directory> [--series]')
         sys.exit(2)
-    streams = read_bag(sys.argv[1], TOPICS)
-    print('\n'.join(report(streams, series='--series' in sys.argv)))
+    run = BehaviorsRun(ControllerRecording.from_bag(sys.argv[1]))
+    print(BehaviorsReport(run, series='--series' in sys.argv))
 
 
 if __name__ == '__main__':
