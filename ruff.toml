@@ -3,6 +3,8 @@
 
 line-length = 99
 target-version = "py312"
+# Bench scripts kept exactly as they ran on the bench (robot-docs notas): evidence, not product.
+extend-exclude = ["robot_verification/bench/behaviors_series.py", "robot_verification/bench/reversal_bench.py"]
 
 [lint]
 select = [
