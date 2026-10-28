@@ -28,10 +28,21 @@ def state(echo, faults=0):
     return SimpleNamespace(faults=faults, reflexes=0, echo=echo)
 
 
-def instrumentation(expiries=0, expiry_delay_s=0.0, left_wheel_speed=0.0, right_wheel_speed=0.0):
+def instrumentation(
+    expiries=0,
+    expiry_delay_s=0.0,
+    left_wheel_speed=0.0,
+    right_wheel_speed=0.0,
+    max_execution_time_us=0,
+    max_response_time_us=0,
+    deadline_misses=0,
+):
     return SimpleNamespace(
         expiries=expiries,
         expiry_delay_us=round(expiry_delay_s * 1e6),
+        max_execution_time_us=max_execution_time_us,
+        max_response_time_us=max_response_time_us,
+        deadline_misses=deadline_misses,
         left_wheel_speed=left_wheel_speed,
         right_wheel_speed=right_wheel_speed,
     )

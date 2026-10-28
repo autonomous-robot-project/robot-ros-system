@@ -26,6 +26,7 @@ setup(
             'measure_link_load = robot_verification.measure_link_load:main',
             'check_v06 = robot_verification.check_v06:main',
             'check_v02 = robot_verification.check_v02:main',
+            'check_v05 = robot_verification.check_v05:main',
             'run_v02 = robot_verification.run_v02:main',
             'run_closed_loop = robot_verification.run_closed_loop:main',
             'measure_closed_loop = robot_verification.measure_closed_loop:main',
