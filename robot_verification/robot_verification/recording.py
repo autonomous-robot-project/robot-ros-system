@@ -100,6 +100,7 @@ class ControllerRecording:
         instrumentation: Iterable[Sample[Instrumentation]],
         odometry: Iterable[Sample[Odometry]] = (),
     ):
+        # The odometry is empty when the run did not record it (older bags and synthetic tests).
         self.commands: Stream[Command] = Stream(commands)
         self.states: Stream[State] = Stream(states)
         self.instrumentation: Stream[Instrumentation] = Stream(instrumentation)
