@@ -46,12 +46,12 @@ from robot_verification.recording import (  # noqa: E402
 )
 
 RECORDED_TOPICS: list[str] = [COMMAND_TOPIC, STATE_TOPIC, INSTRUMENTATION_TOPIC, ODOMETRY_TOPIC]
-# The sequencer with the mission of V-07, in real time like the agent (ADR 039); the executable is
-# started directly, not through `ros2 run`, which does not forward SIGTERM.
+# The sequencer, in real time like the agent (ADR 039); the executable is started directly, not
+# through `ros2 run`, which does not forward SIGTERM.
 SEQUENCER_EXECUTABLE: str = os.path.join(
     get_package_prefix('robot_sequencer'), 'lib', 'robot_sequencer', 'sequencer'
 )
-SEQUENCER_ARGUMENTS: list[str] = ['--ros-args', '-p', 'mission:=v07']
+MISSION: str = 'v07'
 SESSION_UP_S: float = 5.0  # agent and recorder up, session of the ESP32 established
 # check_v07 leaves out an event answered before the recording; the margin covers it.
 EXTRA_EVENTS: int = 2
@@ -62,14 +62,16 @@ SEQUENCER_STOP_S: float = 5.0
 
 
 class SequencerProcess:
-    """The sequencer with the mission of V-07, as a child process."""
+    """The sequencer with a mission, as a child process; an empty mission waits for /goal_pose."""
 
-    def __init__(self) -> None:
+    def __init__(self, mission: str) -> None:
+        # Quoted, so that YAML reads an empty mission as an empty string, not as null.
+        self._arguments: list[str] = ['--ros-args', '-p', f"mission:='{mission}'"]
         self._process: subprocess.Popen | None = None
 
     def __enter__(self) -> 'SequencerProcess':
         self._process = subprocess.Popen(
-            [*REALTIME_PREFIX, SEQUENCER_EXECUTABLE, *SEQUENCER_ARGUMENTS]
+            [*REALTIME_PREFIX, SEQUENCER_EXECUTABLE, *self._arguments]
         )
         return self
 
@@ -149,7 +151,7 @@ def main() -> None:
         with (
             MicroRosAgent(),
             BagRecorder(sys.argv[1], RECORDED_TOPICS),
-            SequencerProcess(),
+            SequencerProcess(MISSION),
             EventCounter() as counter,
         ):
             announce('V-07: agent, recorder and sequencer up; wheels suspended, motor switch on?')
