@@ -15,20 +15,28 @@ V-01, sequencing rule (failure is the activation of a code in the State; abort i
 
 θ₁ = heading at the end of S1 + π/2; (x₁, y₁) = position at the end of S1 + d₂ (cos θ₁, sin θ₁).
 S4 is the TWIST(0, 0) the sequencer sends at the end or the abort of a mission.
+
+V-07, repetition rule: TWIST(v_r, 0) -> activation of the test code -> TWIST(0, 0) -> its
+deactivation -> TWIST(v_r, 0). The controller activates FAULT_TEST every T_ev and clears it when
+the TWIST(0, 0) arrives (ADR 049); any other code aborts, the default.
 """
 
 from collections.abc import Callable
 import math
 
 from robot_sequencer.mission import (
+    Code,
     DistanceFromStart,
     GoTo,
     HeadingTo,
     Mission,
+    Never,
     Offset,
+    Recover,
     Step,
     TurnTo,
     Twist,
+    wait_until_clear,
 )
 
 # Parameters of V-01.
@@ -49,6 +57,18 @@ def build_v01_mission() -> Mission:
     )
 
 
+# Parameters of V-07.
+V_R: float = 0.2  # m/s, v_r, commanded before each event
+
+
+def build_v07_mission() -> Mission:
+    return Mission(
+        steps=[Step(Twist(V_R, 0.0), until=Never())],
+        reactions={Code.FAULT_TEST: Recover([wait_until_clear(Code.FAULT_TEST)])},
+    )
+
+
 MISSIONS: dict[str, Callable[[], Mission]] = {
     'v01': build_v01_mission,
+    'v07': build_v07_mission,
 }
