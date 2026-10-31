@@ -1,39 +1,15 @@
-"""The engine on the sequence of V-01: S1 TWIST, S2 TURN_TO, S3 GO_TO, S4 TWIST(0, 0)."""
+"""The engine on the mission of V-01: S1 TWIST, S2 TURN_TO, S3 GO_TO, S4 TWIST(0, 0)."""
 
 import math
 
 import pytest
 from robot_sequencer.geometry import Point, Pose
-from robot_sequencer.mission import (
-    STOP,
-    Behavior,
-    Code,
-    Command,
-    DistanceFromStart,
-    GoTo,
-    HeadingTo,
-    Mission,
-    OdometryReading,
-    Offset,
-    Step,
-    TurnTo,
-    Twist,
-)
+from robot_sequencer.mission import STOP, Behavior, Code, Command, OdometryReading
+from robot_sequencer.missions import build_v01_mission
 from robot_sequencer.sequencer import MissionStatus, Sequencer
 
 NO_CODES: frozenset[Code] = frozenset()
 FAULT = frozenset({Code.FAULT_COGNIZANT})
-
-
-def v01_like_mission() -> Mission:
-    corner = Offset(turn=math.pi / 2, distance=0.5)
-    return Mission(
-        steps=[
-            Step(Twist(0.2, 0.0), until=DistanceFromStart(1.0)),
-            Step(TurnTo(HeadingTo(corner))),
-            Step(GoTo(corner)),
-        ]
-    )
 
 
 def moving(x: float, y: float, theta: float) -> OdometryReading:
@@ -46,7 +22,7 @@ def at_rest(x: float, y: float, theta: float) -> OdometryReading:
 
 @pytest.fixture
 def sequencer() -> Sequencer:
-    return Sequencer(v01_like_mission())
+    return Sequencer(build_v01_mission())
 
 
 def test_before_the_first_odometry_it_waits_with_twist_zero(sequencer):
