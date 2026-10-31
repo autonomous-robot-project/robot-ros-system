@@ -1,0 +1,36 @@
+# Deliberator in the test configuration (V-04, V-08 C1): the planner plans over the map M,
+# with a costmap of the static and inflation layers only (robot-docs arquitetura.md, F7 D1).
+# The map_server file is set by the launch. Listed: the parameters that differ from the Nav2
+# defaults and those that record a decision; the others keep the Nav2 defaults.
+# Criticality: T2, product (robot-docs codigo.md).
+
+planner_server:
+  ros__parameters:
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_theta_star_planner::ThetaStarPlanner"  # vertices of the plan (ADR 034)
+      how_many_corners: 8  # 8-neighbourhood (robot-docs nota 0003)
+      w_traversal_cost: 0.0  # minimum weight: shortest path outside the forbidden zone (ADR 042)
+      allow_unknown: true  # the planner may cross unknown space (arquitetura.md)
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      resolution: 0.05  # m, the map resolution (ADR 041)
+      # Forbidden zone = r + m + res = 0.131 + 0.10 + 0.05 m (ADR 042; r measured, nota 0003)
+      robot_radius: 0.281
+      track_unknown_space: true  # keeps unknown cells unknown, for allow_unknown
+      plugins: ["static_layer", "inflation_layer"]  # no obstacle layer in tests (F7 D1)
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # Above the forbidden zone, by one cell (ADR 041): marks the whole zone as inscribed
+        inflation_radius: 0.331
+
+odom_to_tf:
+  ros__parameters:
+    odom_topic: "/controller/odometry"
+    frame_id: "odom"
+    child_frame_id: "base_link"
+    use_original_odom_timestamp: true  # the controller's stamp (ADRs 026 and 027)
