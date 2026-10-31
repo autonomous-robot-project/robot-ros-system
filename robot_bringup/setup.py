@@ -12,13 +12,20 @@ setup(
         ('share/' + package_name + '/maps', ['maps/m.pgm', 'maps/m.yaml']),
         (
             'share/' + package_name + '/config',
-            ['config/deliberator_test.yaml', 'config/slam_load.yaml'],
+            [
+                'config/deliberator_test.yaml',
+                'config/deliberator_operation.yaml',
+                'config/slam.yaml',
+                'config/slam_load.yaml',
+            ],
         ),
         (
             'share/' + package_name + '/launch',
             [
                 'launch/deliberator_test.launch.py',
                 'launch/deliberator_c1.launch.py',
+                'launch/lidar.launch.py',
+                'launch/robot.launch.py',
             ],
         ),
     ],
@@ -28,7 +35,7 @@ setup(
     maintainer_email='lucasfranciscovieira@gmail.com',
     description=(
         'Launch files and configuration of the robot: the deliberator in the test '
-        'configuration of the verifications.'
+        'configuration of the verifications, and the whole robot in operation.'
     ),
     license='Proprietary',
 )

@@ -1,0 +1,8 @@
+# slam_toolbox in every configuration (operation and V-08 C1): the parameters that differ from the
+# package defaults (mapper_params_online_async.yaml), which the launch loads first (ADR 040).
+# Criticality: T2, product (robot-docs codigo.md).
+
+slam_toolbox:
+  ros__parameters:
+    base_frame: "base_link"  # the robot frame of the odometry (ADR 026)
+    use_lifecycle_manager: true  # activated by the Nav2 lifecycle_manager, like the deliberator

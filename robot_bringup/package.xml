@@ -3,7 +3,7 @@
 <package format="3">
   <name>robot_bringup</name>
   <version>0.1.0</version>
-  <description>Launch files and configuration of the robot: the deliberator in the test configuration of the verifications.</description>
+  <description>Launch files and configuration of the robot: the deliberator in the test configuration of the verifications, and the whole robot in operation.</description>
   <maintainer email="lucasfranciscovieira@gmail.com">Lucas Vieira</maintainer>
   <license>Proprietary</license>
 
@@ -11,11 +11,13 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ldlidar_stl_ros2</exec_depend>
+  <exec_depend>micro_ros_agent</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
   <exec_depend>nav2_planner</exec_depend>
   <exec_depend>nav2_theta_star_planner</exec_depend>
   <exec_depend>odom_to_tf_ros2</exec_depend>
+  <exec_depend>robot_sequencer</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
 

@@ -1,0 +1,18 @@
+# Deliberator in the operation configuration: the test configuration (deliberator_test.yaml, which
+# the launch loads first) plus the obstacle layer over /scan; the static layer reads the map of
+# slam_toolbox (ADRs 040 and 041, arquitetura.md). Listed: only what differs from that file.
+# Criticality: T2, product (robot-docs codigo.md).
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        # Marks and clears at each scan (ADR 041); ranges keep the Nav2 defaults
+        observation_sources: "scan"
+        scan:
+          topic: "/scan"
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
