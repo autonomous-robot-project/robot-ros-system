@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from enum import Enum
+import itertools
 import math
 from typing import TYPE_CHECKING
 
@@ -88,6 +89,25 @@ def read_bag(path: str, message_types: dict[str, type]) -> dict[str, Stream]:
             message = deserialize_message(data, message_types[topic])
             samples[topic].append(Sample(time_ns * 1e-9, message))
     return {topic: Stream(topic_samples) for topic, topic_samples in samples.items()}
+
+
+def read_markers(path: str, topic: str) -> Stream[str]:
+    """Read the markers of a procedure (std_msgs/String) from a ros2 bag, as text."""
+    from std_msgs.msg import String
+
+    samples = read_bag(path, {topic: String})[topic]
+    return Stream(Sample(marker.time_s, marker.message.data) for marker in samples)
+
+
+def find_holes[MessageT](
+    samples: Iterable[Sample[MessageT]], max_gap_s: float
+) -> list[tuple[Sample[MessageT], Sample[MessageT]]]:
+    """Return each pair of consecutive samples farther apart than max_gap_s."""
+    return [
+        (before, after)
+        for before, after in itertools.pairwise(samples)
+        if after.time_s - before.time_s > max_gap_s
+    ]
 
 
 class ControllerRecording:

@@ -31,7 +31,14 @@ from dataclasses import dataclass
 import math
 import sys
 
-from robot_verification.recording import Sample, Stream, Verdict, is_close_float32, read_bag
+from robot_verification.recording import (
+    Stream,
+    Verdict,
+    find_holes,
+    is_close_float32,
+    read_bag,
+    read_markers,
+)
 
 # Parameters of V-02.
 V_R = 0.2  # m/s, commanded in the trial
@@ -95,15 +102,11 @@ class Recording:
     def from_bag(cls, path):
         # ROS imports here, so the criterion can be tested without ROS.
         from robot_interfaces.msg import Instrumentation, State
-        from std_msgs.msg import String
 
         assert State.FAULT_COGNIZANT == FAULT_COGNIZANT
         assert State.FAULT_WATCHDOG_RESTART == FAULT_WATCHDOG_RESTART
-        streams = read_bag(
-            path,
-            {STATE_TOPIC: State, INSTRUMENTATION_TOPIC: Instrumentation, MARKER_TOPIC: String},
-        )
-        markers = [Sample(m.time_s, m.message.data) for m in streams[MARKER_TOPIC]]
+        streams = read_bag(path, {STATE_TOPIC: State, INSTRUMENTATION_TOPIC: Instrumentation})
+        markers = read_markers(path, MARKER_TOPIC)
         return cls(streams[STATE_TOPIC], streams[INSTRUMENTATION_TOPIC], markers)
 
     def marker_times(self, name):
@@ -167,7 +170,7 @@ class V02:
 
     def recorded_without_holes(self):
         states = self.recording.states.between(-math.inf, self.injection_s)
-        return not _holes(states)
+        return not find_holes(states, MAX_STATE_GAP_S)
 
     @property
     def run_is_valid(self):
@@ -216,19 +219,11 @@ class V02:
         if self.injection_s is None:
             return None
         restarts = [
-            after for _, after in _holes(self.recording.states) if after.time_s > self.injection_s
+            after
+            for _, after in find_holes(self.recording.states, MAX_STATE_GAP_S)
+            if after.time_s > self.injection_s
         ]
         return restarts[0] if restarts else None
-
-
-def _holes(states):
-    """Return each pair of consecutive states farther apart than MAX_STATE_GAP_S."""
-    states = list(states)
-    return [
-        (before, after)
-        for before, after in zip(states, states[1:], strict=False)
-        if after.time_s - before.time_s > MAX_STATE_GAP_S
-    ]
 
 
 def main():

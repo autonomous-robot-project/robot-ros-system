@@ -32,7 +32,6 @@ Usage: check_v03 <bag directory>. Exit code: 0 pass, 1 fail, 2 invalid run.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import itertools
 import math
 import sys
 from typing import TYPE_CHECKING
@@ -42,8 +41,9 @@ from robot_verification.recording import (
     Sample,
     Stream,
     Verdict,
+    find_holes,
     is_close_float32,
-    read_bag,
+    read_markers,
 )
 
 if TYPE_CHECKING:
@@ -154,15 +154,6 @@ def build_screen_windows(markers: Stream[str]) -> list[ScreenWindow]:
     return [ScreenWindow(p, r, n) for p, r, n in pairs]
 
 
-def find_holes(states: list[Sample[State]]) -> list[tuple[Sample[State], Sample[State]]]:
-    """Return each pair of consecutive states farther apart than MAX_STATE_GAP_S."""
-    return [
-        (before, after)
-        for before, after in itertools.pairwise(states)
-        if after.time_s - before.time_s > MAX_STATE_GAP_S
-    ]
-
-
 class ScreenRun:
     """The quantities measured on the recording of a V-03 run, window by window."""
 
@@ -175,25 +166,21 @@ class ScreenRun:
     def from_bag(cls, path: str) -> ScreenRun:
         # ROS imports here, so the criterion can be tested without ROS.
         from robot_interfaces.msg import Command, State
-        from std_msgs.msg import String
 
         assert State.REFLEX_FRONT_OBSTACLE == REFLEX_FRONT_OBSTACLE
         assert Command.TWIST == TWIST
-        streams = read_bag(path, {MARKER_TOPIC: String})
-        markers = Stream(Sample(m.time_s, m.message.data) for m in streams[MARKER_TOPIC])
-        return cls(ControllerRecording.from_bag(path), markers)
+        return cls(ControllerRecording.from_bag(path), read_markers(path, MARKER_TOPIC))
 
-    @property
-    def start_s(self) -> float:
-        """Return the time of the first recorded state, or inf if none."""
-        states = self.recording.states
-        return states[0].time_s if states else math.inf
+    def get_window_marker_times(self) -> list[float]:
+        """Return the times of the windows in order: placed, removed, placed, removed..."""
+        return [t for window in self.windows for t in (window.placed_s, window.removed_s)]
 
-    @property
-    def end_s(self) -> float:
-        """Return the time of the last recorded state, or -inf if none."""
-        states = self.recording.states
-        return states[-1].time_s if states else -math.inf
+    def get_judged_window_speeds(self) -> list[list[float]]:
+        """Return the speeds of every judged window, the one before the first placement first."""
+        before = [self.get_speeds_before_placement(self.windows[0])]
+        screened = [self.get_speeds_while_screened(window) for window in self.windows]
+        resumed = [self.get_speeds_after_removal(window) for window in self.windows]
+        return before + screened + resumed
 
     def get_speeds_while_screened(self, window: ScreenWindow) -> list[float]:
         return self._get_speeds_between(window.placed_s + T_SETTLE_S, window.removed_s)
@@ -217,12 +204,24 @@ class ScreenRun:
         return [state for state in states if not echoes_trial_command(state)]
 
     def find_state_holes(self) -> list[tuple[Sample[State], Sample[State]]]:
-        return find_holes(list(self.recording.states))
+        return find_holes(self.recording.states, MAX_STATE_GAP_S)
 
     def count_reflex_states(self, window: ScreenWindow) -> int:
         """Return how many states of the window report the front obstacle reflex (report only)."""
         states = self.recording.states.between(window.placed_s, window.removed_s)
         return sum(1 for state in states if has_front_obstacle_reflex(state))
+
+    @property
+    def start_s(self) -> float:
+        """Return the time of the first recorded state, or inf if none."""
+        states = self.recording.states
+        return states[0].time_s if states else math.inf
+
+    @property
+    def end_s(self) -> float:
+        """Return the time of the last recorded state, or -inf if none."""
+        states = self.recording.states
+        return states[-1].time_s if states else -math.inf
 
     def _get_speeds_between(self, start_s: float, end_s: float) -> list[float]:
         return [get_linear_speed(s) for s in self.recording.odometry.between(start_s, end_s)]
@@ -276,9 +275,7 @@ class V03Verification:
         """Check for three placements and removals, alternating, starting with a placement."""
         placed = get_marker_times(self.run.markers, PLACED)
         removed = get_marker_times(self.run.markers, REMOVED)
-        alternating = sorted(placed + removed) == [
-            t for window in self.run.windows for t in (window.placed_s, window.removed_s)
-        ]
+        alternating = sorted(placed + removed) == self.run.get_window_marker_times()
         return len(placed) == len(removed) == EXPECTED_SCREENS and alternating
 
     def was_state_recorded_from_steady_start(self) -> bool:
@@ -291,12 +288,8 @@ class V03Verification:
         return not self.run.find_states_without_trial_echo()
 
     def was_odometry_recorded_in_every_window(self) -> bool:
-        windows = self.run.windows
-        before = [self.run.get_speeds_before_placement(windows[0])]
-        screened = [self.run.get_speeds_while_screened(window) for window in windows]
-        resumed = [self.run.get_speeds_after_removal(window) for window in windows]
-        speeds = itertools.chain(before, screened, resumed)
-        return all(len(window_speeds) >= MIN_WINDOW_SAMPLES for window_speeds in speeds)
+        windows = self.run.get_judged_window_speeds()
+        return all(len(speeds) >= MIN_WINDOW_SAMPLES for speeds in windows)
 
     def was_moving_before_first_placement(self) -> bool:
         speeds = self.run.get_speeds_before_placement(self.run.windows[0])

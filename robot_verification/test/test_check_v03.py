@@ -25,6 +25,12 @@ START_S = 3.0  # steady state before the first placement
 BETWEEN_SCREENS_S = 4.0  # from a removal to the next placement
 AFTER_LAST_S = 4.0
 FAULT_FRONT_SENSOR = 8
+HOLE_S = 0.5  # no state for this long from hole_at_s
+MARGIN_S = 0.06  # inside a tolerance by a bit more than one odometry period
+LATE_S = 0.1  # beyond a tolerance by two odometry periods
+CUT_SHORT_S = 0.2  # recording stopped this long after the resume window opens
+OFF_BAND = 0.01  # m/s beyond e_r
+LATE_START_S = 0.5  # state recorded from this long before the first placement, under 1 s
 
 
 @dataclass
@@ -42,7 +48,7 @@ class SyntheticV03Run:
     speed_offset: float = 0.0  # added to v_r while moving
     fault_while_screened: bool = False
     command_applied: bool = True
-    hole_at_s: float | None = None  # no state for 0.5 s from this time
+    hole_at_s: float | None = None  # no state for HOLE_S from this time
     after_last_s: float = AFTER_LAST_S  # recording after the last removal
     states_from_s: float = 0.0  # first state recorded
     odometry_recorded: bool = True
@@ -105,7 +111,9 @@ class SyntheticV03Run:
         return state(echo, faults=faults, reflexes=reflexes)
 
     def _recorded(self, sample: Sample) -> bool:
-        return self.hole_at_s is None or not self.hole_at_s <= sample.time_s < self.hole_at_s + 0.5
+        return (
+            self.hole_at_s is None or not self.hole_at_s <= sample.time_s < self.hole_at_s + HOLE_S
+        )
 
 
 def get_verdict(run: SyntheticV03Run) -> Verdict:
@@ -117,7 +125,7 @@ def test_nominal_run_passes():
 
 
 def test_stop_and_resume_just_within_the_tolerances_pass():
-    run = SyntheticV03Run(stop_after_s=T_SETTLE_S - 0.06, resume_after_s=T_RESUME_S - 0.06)
+    run = SyntheticV03Run(stop_after_s=T_SETTLE_S - MARGIN_S, resume_after_s=T_RESUME_S - MARGIN_S)
     assert get_verdict(run) is Verdict.PASS
 
 
@@ -132,7 +140,7 @@ def test_never_stopping_fails():
 
 
 def test_stopping_late_fails():
-    assert get_verdict(SyntheticV03Run(stop_after_s=T_SETTLE_S + 0.1)) is Verdict.FAIL
+    assert get_verdict(SyntheticV03Run(stop_after_s=T_SETTLE_S + LATE_S)) is Verdict.FAIL
 
 
 def test_never_resuming_fails():
@@ -140,7 +148,7 @@ def test_never_resuming_fails():
 
 
 def test_resuming_late_fails():
-    assert get_verdict(SyntheticV03Run(resume_after_s=T_RESUME_S + 0.1)) is Verdict.FAIL
+    assert get_verdict(SyntheticV03Run(resume_after_s=T_RESUME_S + LATE_S)) is Verdict.FAIL
 
 
 def test_fault_code_while_screened_fails():
@@ -148,7 +156,7 @@ def test_fault_code_while_screened_fails():
 
 
 def test_speed_off_v_r_before_the_first_placement_is_invalid():
-    assert get_verdict(SyntheticV03Run(speed_offset=E_R + 0.01)) is Verdict.INVALID
+    assert get_verdict(SyntheticV03Run(speed_offset=E_R + OFF_BAND)) is Verdict.INVALID
 
 
 def test_missing_screen_is_invalid():
@@ -164,12 +172,12 @@ def test_hole_in_the_state_is_invalid():
 
 
 def test_recording_cut_short_after_the_last_removal_is_invalid():
-    run = SyntheticV03Run(after_last_s=T_RESUME_S + 0.2)
+    run = SyntheticV03Run(after_last_s=T_RESUME_S + CUT_SHORT_S)
     assert get_verdict(run) is Verdict.INVALID
 
 
 def test_state_starting_after_the_steady_window_is_invalid():
-    assert get_verdict(SyntheticV03Run(states_from_s=START_S - 0.5)) is Verdict.INVALID
+    assert get_verdict(SyntheticV03Run(states_from_s=START_S - LATE_START_S)) is Verdict.INVALID
 
 
 def test_recording_without_odometry_is_invalid():
