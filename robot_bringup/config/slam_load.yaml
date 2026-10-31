@@ -1,0 +1,14 @@
+# SLAM as computational load of V-08 C1: slam_toolbox processes /scan, but nobody consumes its
+# map and it publishes no transform; the planner keeps planning over M (ADR 040, F8 D1).
+# The launch loads first the slam_toolbox defaults (mapper_params_online_async.yaml of the
+# package) and then this file. Listed: only the parameters that differ from those defaults.
+# Criticality: T2, product (robot-docs codigo.md).
+
+slam_toolbox:
+  ros__parameters:
+    # Own frame and topic, consumed by nobody (ADR 040): map -> odom stays the static identity
+    map_frame: "slam_map"
+    map_name: "/slam_map"
+    transform_publish_period: 0.0  # s; 0 = never publishes slam_map -> odom
+    base_frame: "base_link"  # the robot frame of the odometry (ADR 026)
+    use_lifecycle_manager: true  # activated by the Nav2 lifecycle_manager, like the deliberator
