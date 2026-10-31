@@ -4,9 +4,9 @@ Vocabulary of the missions: steps of primitive behaviors, their targets and term
 Criticality: T2, product (robot-docs codigo.md).
 
 A mission is data (ADR 032): a list of steps, each with a behavior of ADR 024, parameters computed
-at the entry of the step from the current pose, and a termination tested on each Odometry
-(ADR 033). The reactions to the codes of the controller are tables per step and per mission; the
-missions of V-01 leave them empty, so every activation of a code aborts, the default.
+at the entry of the step from the current pose, and a termination tested on the message that
+changes its input: the pose on each Odometry, a code on each State (ADR 033). The reaction to the
+activation of a code comes from the table of the step, else of the mission, else abort.
 Domain without ROS (ADR 047): the node converts the messages to these types.
 """
 
@@ -79,7 +79,19 @@ class Abort:
     """Reaction that ends the mission with TWIST(0, 0), the default for every code (ADR 032)."""
 
 
-Reaction = Abort
+@dataclass(frozen=True)
+class Ignore:
+    """Reaction that leaves the step running: the code does not affect it (ADR 037)."""
+
+
+@dataclass(frozen=True)
+class Recover:
+    """Reaction that runs its steps before the current one, then enters it again (ADR 032)."""
+
+    steps: Sequence[Step]
+
+
+Reaction = Abort | Ignore | Recover
 
 
 class Offset:
@@ -143,7 +155,23 @@ class PositionReached:
         return reading.is_at_rest and distance <= EPSILON_D
 
 
-Termination = DistanceFromStart | HeadingReached | PositionReached
+@dataclass(frozen=True)
+class Never:
+    """No termination: the step runs until a reaction ends it (V-07)."""
+
+    def is_met(self, start: Pose, command: Command, reading: OdometryReading) -> bool:
+        return False
+
+
+@dataclass(frozen=True)
+class Cleared:
+    """The code is no longer active (ADR 037); tested on each State, where the codes change."""
+
+    code: Code
+
+
+PoseTermination = DistanceFromStart | HeadingReached | PositionReached | Never
+Termination = PoseTermination | Cleared
 
 
 @dataclass(frozen=True)
@@ -198,7 +226,17 @@ class Step:
         return termination
 
 
+def wait_until_clear(code: Code) -> Step:
+    """Return a step that holds TWIST(0, 0) until the code clears, ignoring it (ADR 038)."""
+    # The timeout T_WAIT of ADR 038 comes with the mission by plan (V-04), its only user.
+    return Step(Twist(0.0, 0.0), until=Cleared(code), reactions={code: Ignore()})
+
+
 @dataclass(frozen=True)
 class Mission:
     steps: Sequence[Step]
     reactions: Mapping[Code, Reaction] = field(default_factory=dict)
+
+    def get_reaction(self, step: Step, code: Code) -> Reaction:
+        """Return the reaction of the step to the code, else of the mission, else abort."""
+        return step.reactions.get(code) or self.reactions.get(code) or Abort()
