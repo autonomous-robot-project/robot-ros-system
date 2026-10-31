@@ -24,6 +24,7 @@ setup(
         'console_scripts': [
             'check_link = robot_verification.check_link:main',
             'measure_link_load = robot_verification.measure_link_load:main',
+            'measure_clock_drift = robot_verification.measure_clock_drift:main',
             'check_v06 = robot_verification.check_v06:main',
             'check_v02 = robot_verification.check_v02:main',
             'check_v03 = robot_verification.check_v03:main',
