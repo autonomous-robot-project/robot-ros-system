@@ -65,6 +65,29 @@ class MicroRosAgent:
         return f'agent exited with code {self._process.returncode}: {stderr.strip()}'
 
 
+class SequencerProcess:
+    """The node of the sequencer running a mission, as a child process, its log in a file."""
+
+    def __init__(self, mission, log_path):
+        executable = os.path.join(
+            get_package_prefix('robot_sequencer'), 'lib', 'robot_sequencer', 'sequencer'
+        )
+        self._command = [*REALTIME_PREFIX, executable, '--ros-args', '-p', f'mission:={mission}']
+        self._log_path = log_path
+        self._process = None
+
+    def __enter__(self):
+        with open(self._log_path, 'w') as log:
+            self._process = subprocess.Popen(self._command, stdout=log, stderr=subprocess.STDOUT)
+        return self
+
+    def __exit__(self, *_exception):
+        # The executable itself, not `ros2 run`: SIGTERM reaches the node, which exits cleanly.
+        if self._process.poll() is None:
+            self._process.terminate()
+        self._process.wait()
+
+
 class BagRecorder:
     """`ros2 bag record` of the given topics, as a child process."""
 
