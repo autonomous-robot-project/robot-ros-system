@@ -43,23 +43,28 @@ class SyntheticV03Run:
     fault_while_screened: bool = False
     command_applied: bool = True
     hole_at_s: float | None = None  # no state for 0.5 s from this time
+    after_last_s: float = AFTER_LAST_S  # recording after the last removal
+    states_from_s: float = 0.0  # first state recorded
+    odometry_recorded: bool = True
+    removal_first: bool = False  # operator error: each "removed" comes before its "placed"
 
     def placement_times(self) -> list[float]:
         return [START_S + k * (T_O_S + BETWEEN_SCREENS_S) for k in range(self.screens)]
 
     def end_s(self) -> float:
-        return (
-            START_S + self.screens * (T_O_S + BETWEEN_SCREENS_S) - BETWEEN_SCREENS_S + AFTER_LAST_S
-        )
+        last_removed_s = START_S + self.screens * (T_O_S + BETWEEN_SCREENS_S) - BETWEEN_SCREENS_S
+        return last_removed_s + self.after_last_s
 
     def run(self) -> ScreenRun:
         states = [
             s
-            for s in periodic(0.0, self.end_s(), STATE_PERIOD_S, self._state_at)
+            for s in periodic(self.states_from_s, self.end_s(), STATE_PERIOD_S, self._state_at)
             if self._recorded(s)
         ]
-        odometries = periodic(
-            0.0, self.end_s(), ODOMETRY_PERIOD_S, lambda t: odometry(self._speed_at(t))
+        odometries = (
+            periodic(0.0, self.end_s(), ODOMETRY_PERIOD_S, lambda t: odometry(self._speed_at(t)))
+            if self.odometry_recorded
+            else []
         )
         recording = ControllerRecording(
             commands=[], states=states, instrumentation=[], odometry=odometries
@@ -68,8 +73,9 @@ class SyntheticV03Run:
 
     def _markers(self) -> list[Sample[str]]:
         markers: list[Sample[str]] = []
+        first, second = (REMOVED, PLACED) if self.removal_first else (PLACED, REMOVED)
         for placed_s in self.placement_times():
-            markers += [Sample(placed_s, PLACED), Sample(placed_s + T_O_S, REMOVED)]
+            markers += [Sample(placed_s, first), Sample(placed_s + T_O_S, second)]
         return markers
 
     def _is_screened(self, time_s: float) -> bool:
@@ -155,3 +161,25 @@ def test_expired_command_is_invalid():
 
 def test_hole_in_the_state_is_invalid():
     assert get_verdict(SyntheticV03Run(hole_at_s=START_S + 1.0)) is Verdict.INVALID
+
+
+def test_recording_cut_short_after_the_last_removal_is_invalid():
+    run = SyntheticV03Run(after_last_s=T_RESUME_S + 0.2)
+    assert get_verdict(run) is Verdict.INVALID
+
+
+def test_state_starting_after_the_steady_window_is_invalid():
+    assert get_verdict(SyntheticV03Run(states_from_s=START_S - 0.5)) is Verdict.INVALID
+
+
+def test_recording_without_odometry_is_invalid():
+    assert get_verdict(SyntheticV03Run(odometry_recorded=False)) is Verdict.INVALID
+
+
+def test_removal_before_placement_is_invalid():
+    assert get_verdict(SyntheticV03Run(removal_first=True)) is Verdict.INVALID
+
+
+def test_report_of_a_run_without_markers_shows_the_invalid_verdict():
+    report = str(V03Report(V03Verification(SyntheticV03Run(screens=0).run())))
+    assert report.endswith('V-03: INVALID')

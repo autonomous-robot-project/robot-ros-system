@@ -16,13 +16,15 @@ Why: V-03 (robot-docs verifications/V-03).
 Criterion (V-03): the linear speed of the Odometry is zero from each placement + T_settle until the
 removal; it is within v_r +- e_r from each removal + T_resume until the next placement, or the end;
 no fault code is active from the first placement to the end. The reflex bit is reported, not
-judged.
+judged. Zero is an exact 0.0: the firmware publishes a literal zero after T_vel with no edge, and
+the Odometry averages the two wheels.
 
-Validity of the run: three placements and removals, in order; the echo of the State shows
-TWIST(v_r, 0) from before the first placement to the end, so no stop comes from an expired command;
-the speed is within v_r +- e_r in the second before the first placement, so the robot was moving
-(before the others, the criterion of the resume judges it); the State is recorded without holes;
-and the Odometry is recorded in every judged window.
+Validity of the run: three placements and removals, in order; the State is recorded from a second
+before the first placement, without holes; its echo shows TWIST(v_r, 0) from then to the end, so no
+stop comes from an expired command; the speed is within v_r +- e_r in the second before the first
+placement, so the robot was moving (before the others, the criterion of the resume judges it); and
+every judged window holds at least MIN_WINDOW_SAMPLES of the Odometry, which also catches a
+recording cut short.
 
 Usage: check_v03 <bag directory>. Exit code: 0 pass, 1 fail, 2 invalid run.
 """
@@ -50,7 +52,7 @@ if TYPE_CHECKING:
 
 # Parameters of V-03.
 V_R: float = 0.2  # m/s, commanded in the trial
-T_O_S: float = 2.0  # time the screen is held
+T_O_S: float = 2.0  # time the screen is held; run_v03 counts it down
 EXPECTED_SCREENS: int = 3
 
 # Parameters of the controller (robot-docs nota 0011, nota 0014, nota 0015).
@@ -87,21 +89,31 @@ T_RESUME_S: float = (
 E_R: float = 0.03  # m/s
 STEADY_BEFORE_S: float = 1.0  # window before each placement where the robot must be moving
 MAX_STATE_GAP_S: float = 0.1  # longer is a hole in the recording
+# Fewest Odometry samples in a judged window: 0.5 s at 20 Hz, two thirds of the shortest window
+# (zero while screened, T_o - T_settle = 0.75 s).
+MIN_WINDOW_SAMPLES: int = 10
 
 # Codes of State.msg, checked against the generated message when a bag is read.
 REFLEX_FRONT_OBSTACLE: int = 1
 TWIST: int = 0  # Command.TWIST
 
 MARKER_TOPIC: str = '/verification/v03_marker'
-PLACED, REMOVED = 'placed', 'removed'
+PLACED: str = 'placed'
+REMOVED: str = 'removed'
 
 
 @dataclass(frozen=True)
 class ScreenWindow:
-    """A placement of the screen as announced by run_v03: from "placed" to "removed"."""
+    """
+    A placement of the screen as announced by run_v03: from "placed" to "removed".
+
+    next_placed_s bounds the resume after the removal; None for the last screen, whose resume runs
+    to the end of the recording.
+    """
 
     placed_s: float
     removed_s: float
+    next_placed_s: float | None
 
 
 def get_linear_speed(sample: Sample[Odometry]) -> float:
@@ -130,9 +142,16 @@ def get_marker_times(markers: Stream[str], name: str) -> list[float]:
 
 
 def build_screen_windows(markers: Stream[str]) -> list[ScreenWindow]:
-    """Pair each "placed" with the "removed" that follows it, in order."""
+    """
+    Pair the k-th "placed" with the k-th "removed", in order.
+
+    An unpaired marker is dropped here; were_screens_marked then rejects the run, because the
+    markers no longer match the windows.
+    """
     placed, removed = get_marker_times(markers, PLACED), get_marker_times(markers, REMOVED)
-    return [ScreenWindow(p, r) for p, r in zip(placed, removed, strict=False)]
+    next_placed: list[float | None] = [*placed[1:], None]
+    pairs = zip(placed, removed, next_placed, strict=False)
+    return [ScreenWindow(p, r, n) for p, r, n in pairs]
 
 
 def find_holes(states: list[Sample[State]]) -> list[tuple[Sample[State], Sample[State]]]:
@@ -165,6 +184,12 @@ class ScreenRun:
         return cls(ControllerRecording.from_bag(path), markers)
 
     @property
+    def start_s(self) -> float:
+        """Return the time of the first recorded state, or inf if none."""
+        states = self.recording.states
+        return states[0].time_s if states else math.inf
+
+    @property
     def end_s(self) -> float:
         """Return the time of the last recorded state, or -inf if none."""
         states = self.recording.states
@@ -173,11 +198,9 @@ class ScreenRun:
     def get_speeds_while_screened(self, window: ScreenWindow) -> list[float]:
         return self._get_speeds_between(window.placed_s + T_SETTLE_S, window.removed_s)
 
-    def get_speeds_after_removal(self, index: int) -> list[float]:
-        start_s = self.windows[index].removed_s + T_RESUME_S
-        is_last = index + 1 == len(self.windows)
-        end_s = self.end_s if is_last else self.windows[index + 1].placed_s
-        return self._get_speeds_between(start_s, end_s)
+    def get_speeds_after_removal(self, window: ScreenWindow) -> list[float]:
+        end_s = self.end_s if window.next_placed_s is None else window.next_placed_s
+        return self._get_speeds_between(window.removed_s + T_RESUME_S, end_s)
 
     def get_speeds_before_placement(self, window: ScreenWindow) -> list[float]:
         return self._get_speeds_between(window.placed_s - STEADY_BEFORE_S, window.placed_s)
@@ -219,19 +242,21 @@ class V03Verification:
             return Verdict.INVALID
         passed = (
             all(self.did_stop_while_screened(window) for window in self.run.windows)
-            and all(self.did_resume_after(index) for index in range(len(self.run.windows)))
+            and all(self.did_resume_after(window) for window in self.run.windows)
             and self.was_free_of_faults()
         )
         return Verdict.PASS if passed else Verdict.FAIL
 
     @property
     def run_is_valid(self) -> bool:
+        # were_screens_marked comes first: the other conditions read the first window.
         return (
             self.were_screens_marked()
-            and self.was_command_echoed_throughout()
-            and self.was_moving_before_first_placement()
+            and self.was_state_recorded_from_steady_start()
             and self.was_state_recorded_without_holes()
+            and self.was_command_echoed_throughout()
             and self.was_odometry_recorded_in_every_window()
+            and self.was_moving_before_first_placement()
         )
 
     # --- Criterion ---
@@ -239,8 +264,8 @@ class V03Verification:
     def did_stop_while_screened(self, window: ScreenWindow) -> bool:
         return all(speed == 0.0 for speed in self.run.get_speeds_while_screened(window))
 
-    def did_resume_after(self, index: int) -> bool:
-        return all(is_at_trial_speed(speed) for speed in self.run.get_speeds_after_removal(index))
+    def did_resume_after(self, window: ScreenWindow) -> bool:
+        return all(is_at_trial_speed(speed) for speed in self.run.get_speeds_after_removal(window))
 
     def was_free_of_faults(self) -> bool:
         return not self.run.find_faulty_states()
@@ -256,20 +281,26 @@ class V03Verification:
         ]
         return len(placed) == len(removed) == EXPECTED_SCREENS and alternating
 
-    def was_command_echoed_throughout(self) -> bool:
-        return not self.run.find_states_without_trial_echo()
-
-    def was_moving_before_first_placement(self) -> bool:
-        speeds = self.run.get_speeds_before_placement(self.run.windows[0])
-        return bool(speeds) and all(is_at_trial_speed(speed) for speed in speeds)
+    def was_state_recorded_from_steady_start(self) -> bool:
+        return self.run.start_s <= self.run.windows[0].placed_s - STEADY_BEFORE_S
 
     def was_state_recorded_without_holes(self) -> bool:
         return bool(self.run.recording.states) and not self.run.find_state_holes()
 
+    def was_command_echoed_throughout(self) -> bool:
+        return not self.run.find_states_without_trial_echo()
+
     def was_odometry_recorded_in_every_window(self) -> bool:
-        screened = (self.run.get_speeds_while_screened(w) for w in self.run.windows)
-        resumed = (self.run.get_speeds_after_removal(i) for i in range(len(self.run.windows)))
-        return all(itertools.chain(screened, resumed))
+        windows = self.run.windows
+        before = [self.run.get_speeds_before_placement(windows[0])]
+        screened = [self.run.get_speeds_while_screened(window) for window in windows]
+        resumed = [self.run.get_speeds_after_removal(window) for window in windows]
+        speeds = itertools.chain(before, screened, resumed)
+        return all(len(window_speeds) >= MIN_WINDOW_SAMPLES for window_speeds in speeds)
+
+    def was_moving_before_first_placement(self) -> bool:
+        speeds = self.run.get_speeds_before_placement(self.run.windows[0])
+        return all(is_at_trial_speed(speed) for speed in speeds)
 
 
 class V03Report:
@@ -282,8 +313,9 @@ class V03Report:
     def __str__(self) -> str:
         lines = [self._format_header_line(), self._format_tolerance_line()]
         if self.verification.were_screens_marked():
-            lines += [self._format_moving_line()]
-            lines += self._format_window_lines() + self._format_run_lines()
+            lines += self._format_validity_lines()
+            lines += self._format_window_lines()
+            lines.append(self._format_fault_line())
         lines.append(f'V-03: {self.verification.verdict.name}')
         return '\n'.join(lines)
 
@@ -296,28 +328,33 @@ class V03Report:
             f'{T_RESUME_S:.2f} s after each removal'
         )
 
-    def _format_moving_line(self) -> str:
-        moving = self.verification.was_moving_before_first_placement()
-        return f'  at v_r before the first placement: {moving}'
+    def _format_validity_lines(self) -> list[str]:
+        verification = self.verification
+        conditions = [
+            ('state from a second before', verification.was_state_recorded_from_steady_start()),
+            ('state without holes', verification.was_state_recorded_without_holes()),
+            ('echo of TWIST(v_r, 0) throughout', verification.was_command_echoed_throughout()),
+            ('odometry in every window', verification.was_odometry_recorded_in_every_window()),
+            (
+                'at v_r before the first placement',
+                verification.was_moving_before_first_placement(),
+            ),
+        ]
+        return [f'  {name}: {held}' for name, held in conditions]
 
     def _format_window_lines(self) -> list[str]:
-        return [self._format_window_line(index) for index in range(len(self.run.windows))]
+        windows = enumerate(self.run.windows, start=1)
+        return [self._format_window_line(number, window) for number, window in windows]
 
-    def _format_window_line(self, index: int) -> str:
-        window = self.run.windows[index]
+    def _format_window_line(self, number: int, window: ScreenWindow) -> str:
         return (
-            f'  screen {index + 1}: stopped: {self.verification.did_stop_while_screened(window)}, '
-            f'resumed: {self.verification.did_resume_after(index)}, '
+            f'  screen {number}: stopped: {self.verification.did_stop_while_screened(window)}, '
+            f'resumed: {self.verification.did_resume_after(window)}, '
             f'reflex states: {self.run.count_reflex_states(window)}'
         )
 
-    def _format_run_lines(self) -> list[str]:
-        verification = self.verification
-        return [
-            f'  states with a fault code: {len(self.run.find_faulty_states())}',
-            f'  echo of TWIST(v_r, 0) throughout: {verification.was_command_echoed_throughout()}',
-            f'  state recorded without holes: {verification.was_state_recorded_without_holes()}',
-        ]
+    def _format_fault_line(self) -> str:
+        return f'  states with a fault code: {len(self.run.find_faulty_states())}'
 
 
 def main() -> None:
