@@ -24,8 +24,15 @@ def command(linear=0.2, angular=0.0):
     )
 
 
-def state(echo, faults=0):
-    return SimpleNamespace(faults=faults, reflexes=0, echo=echo)
+def state(echo, faults=0, reflexes=0):
+    return SimpleNamespace(faults=faults, reflexes=reflexes, echo=echo)
+
+
+def odometry(linear=0.0):
+    """Return an Odometry with only the linear speed of its twist."""
+    return SimpleNamespace(
+        twist=SimpleNamespace(twist=SimpleNamespace(linear=SimpleNamespace(x=linear)))
+    )
 
 
 def instrumentation(
