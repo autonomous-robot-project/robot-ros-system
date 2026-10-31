@@ -11,6 +11,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/maps', ['maps/m.pgm', 'maps/m.yaml']),
         ('share/' + package_name + '/config', ['config/deliberator_test.yaml']),
+        ('share/' + package_name + '/launch', ['launch/deliberator_test.launch.py']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
