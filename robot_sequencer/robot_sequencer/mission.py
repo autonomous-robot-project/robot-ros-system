@@ -71,6 +71,7 @@ class Code(Enum):
     FAULT_FRONT_SENSOR = auto()
     FAULT_TEST = auto()
     REFLEX_FRONT_OBSTACLE = auto()
+    UNKNOWN = auto()  # a bit the sequencer does not know yet: the default reaction still applies
 
 
 @dataclass(frozen=True)

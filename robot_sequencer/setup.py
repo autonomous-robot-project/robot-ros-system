@@ -20,4 +20,9 @@ setup(
     ),
     license='Proprietary',
     tests_require=['pytest'],
+    entry_points={
+        'console_scripts': [
+            'sequencer = robot_sequencer.sequencer_node:main',
+        ],
+    },
 )
