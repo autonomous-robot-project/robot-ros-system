@@ -29,6 +29,7 @@ setup(
             'check_v03 = robot_verification.check_v03:main',
             'check_v05 = robot_verification.check_v05:main',
             'run_v02 = robot_verification.run_v02:main',
+            'run_v03 = robot_verification.run_v03:main',
             'run_closed_loop = robot_verification.run_closed_loop:main',
             'measure_closed_loop = robot_verification.measure_closed_loop:main',
             'plot_closed_loop = robot_verification.plot_closed_loop:main',
