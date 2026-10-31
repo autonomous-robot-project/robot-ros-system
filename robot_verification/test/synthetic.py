@@ -43,6 +43,8 @@ def instrumentation(
     max_execution_time_us=0,
     max_response_time_us=0,
     deadline_misses=0,
+    test_event_index=0,
+    test_event_response_us=0,
 ):
     return SimpleNamespace(
         expiries=expiries,
@@ -50,6 +52,8 @@ def instrumentation(
         max_execution_time_us=max_execution_time_us,
         max_response_time_us=max_response_time_us,
         deadline_misses=deadline_misses,
+        test_event_index=test_event_index,
+        test_event_response_us=test_event_response_us,
         left_wheel_speed=left_wheel_speed,
         right_wheel_speed=right_wheel_speed,
     )

@@ -25,6 +25,9 @@ AGENT_EXECUTABLE = os.path.join(
     get_package_prefix('micro_ros_agent'), 'lib', 'micro_ros_agent', 'micro_ros_agent'
 )
 AGENT_ARGUMENTS = ['serial', '--dev', '/dev/ttyAMA0', '-b', '921600']  # UART of ADR 043
+# Real-time priority of the agent and the sequencer (ADR 039): `chrt` replaces itself with the
+# agent, so SIGTERM still reaches it. Needs `rtprio 50` in limits.d on the RPi.
+REALTIME_PREFIX = ['chrt', '-f', '50']
 
 
 class MicroRosAgent:
@@ -42,7 +45,7 @@ class MicroRosAgent:
 
     def start(self):
         self._process = subprocess.Popen(
-            [AGENT_EXECUTABLE, *AGENT_ARGUMENTS],
+            [*REALTIME_PREFIX, AGENT_EXECUTABLE, *AGENT_ARGUMENTS],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
