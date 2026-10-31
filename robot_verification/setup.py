@@ -38,7 +38,9 @@ setup(
             'run_closed_loop = robot_verification.run_closed_loop:main',
             'measure_closed_loop = robot_verification.measure_closed_loop:main',
             'plot_closed_loop = robot_verification.plot_closed_loop:main',
+            'plot_clock_drift = robot_verification.plot_clock_drift:main',
             'plot_recording = robot_verification.plot_recording:main',
+            'plot_v01 = robot_verification.plot_v01:main',
         ],
     },
 )
