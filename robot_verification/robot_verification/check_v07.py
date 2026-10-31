@@ -55,6 +55,7 @@ TWIST: int = 0  # Command.TWIST
 
 PERCENTILES: int = 100  # statistics.quantiles in hundredths
 P99_INDEX: int = 98  # the 99th of the 99 cut points
+US_PER_MS: int = 1000
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,28 @@ def find_activations(samples: list[Sample[State]]) -> list[Activation]:
     ]
 
 
+def find_last_activation_between(
+    activations: list[Activation], start_s: float, end_s: float
+) -> Activation | None:
+    inside = [a for a in activations if start_s < a.time_s < end_s]
+    return inside[-1] if inside else None
+
+
+def pair_activations(
+    events: list[ResponseEvent], activations: list[Activation]
+) -> list[Activation | None]:
+    """
+    Return the activation of each event, or None where it is not in the recording.
+
+    It is the last activation after the previous event was seen and before this one is.
+    """
+    window_starts_s = [float('-inf')] + [event.seen_s for event in events[:-1]]
+    return [
+        find_last_activation_between(activations, start_s, event.seen_s)
+        for start_s, event in zip(window_starts_s, events, strict=True)
+    ]
+
+
 class ResponseRun:
     """The test events of a recording and the activations of FAULT_TEST that started them."""
 
@@ -117,6 +140,10 @@ class ResponseRun:
         self.instrumentation: list[Sample[Instrumentation]] = list(recording.instrumentation)
         self.events: list[ResponseEvent] = find_events(self.instrumentation)
         self.activations: list[Activation] = find_activations(list(recording.states))
+        # Aligned with self.events.
+        self.activations_of_events: list[Activation | None] = pair_activations(
+            self.events, self.activations
+        )
 
     @classmethod
     def from_bag(cls, path: str) -> ResponseRun:
@@ -127,23 +154,24 @@ class ResponseRun:
         assert Command.TWIST == TWIST
         return cls(ControllerRecording.from_bag(path))
 
-    def get_recorded_events(self) -> list[ResponseEvent]:
-        """Return the events whose activation is in the recording."""
-        return [event for event in self.events if self.find_activation_of(event) is not None]
+    def measure_max_response_us(self) -> int:
+        return max(self.get_responses_us())
 
-    def find_activation_of(self, event: ResponseEvent) -> Activation | None:
-        """
-        Return the activation of an event, or None.
+    def measure_median_response_us(self) -> float:
+        return statistics.median(self.get_responses_us())
 
-        It is the last activation after the previous event was seen and before this one is.
-        """
-        position = self.events.index(event)
-        after_s = self.events[position - 1].seen_s if position > 0 else float('-inf')
-        candidates = [a for a in self.activations if after_s < a.time_s < event.seen_s]
-        return candidates[-1] if candidates else None
+    def measure_p99_response_us(self) -> float:
+        responses_us = self.get_responses_us()
+        quantiles = statistics.quantiles(responses_us, n=PERCENTILES, method='inclusive')
+        return quantiles[P99_INDEX]
 
     def get_responses_us(self) -> list[int]:
         return [event.response_us for event in self.get_recorded_events()]
+
+    def get_recorded_events(self) -> list[ResponseEvent]:
+        """Return the events whose activation is in the recording."""
+        pairs = zip(self.events, self.activations_of_events, strict=True)
+        return [event for event, activation in pairs if activation is not None]
 
     def measure_longest_instrumentation_gap_s(self) -> float:
         pairs = itertools.pairwise(self.instrumentation)
@@ -181,7 +209,7 @@ class V07:
     # --- Criterion ---
 
     def did_every_response_meet_t_seq(self) -> bool:
-        return max(self.run.get_responses_us()) <= T_SEQ_US
+        return self.run.measure_max_response_us() <= T_SEQ_US
 
     # --- Validity of the run ---
 
@@ -198,7 +226,7 @@ class V07:
 
         Only the first may lack it, because it may have started before the recording.
         """
-        activations = [self.run.find_activation_of(event) for event in self.run.events]
+        activations = list(self.run.activations_of_events)
         if activations and activations[0] is None:
             activations.pop(0)
         return all(is_cruise_activation(activation) for activation in activations)
@@ -236,12 +264,13 @@ class V07Report:
         ]
 
     def _format_response_lines(self) -> list[str]:
-        responses_ms = [r / 1000 for r in self.run.get_responses_us()]
-        p99_ms = statistics.quantiles(responses_ms, n=PERCENTILES, method='inclusive')[P99_INDEX]
+        max_ms = self.run.measure_max_response_us() / US_PER_MS
+        median_ms = self.run.measure_median_response_us() / US_PER_MS
+        p99_ms = self.run.measure_p99_response_us() / US_PER_MS
         return [
-            f'  Δ max {max(responses_ms):.1f} ms (T_seq {T_SEQ_US / 1000:.0f} ms), passed: '
+            f'  Δ max {max_ms:.1f} ms (T_seq {T_SEQ_US / US_PER_MS:.0f} ms), passed: '
             f'{self.verification.did_every_response_meet_t_seq()}',
-            f'  Δ median {statistics.median(responses_ms):.1f} ms, p99 {p99_ms:.1f} ms',
+            f'  Δ median {median_ms:.1f} ms, p99 {p99_ms:.1f} ms',
         ]
 
 
