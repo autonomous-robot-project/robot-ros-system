@@ -1,7 +1,6 @@
 """Unit tests of the V-07 criterion on synthetic State and Instrumentation streams."""
 
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 
 from robot_verification.check_v07 import (
     FAULT_TEST,
@@ -13,18 +12,11 @@ from robot_verification.check_v07 import (
     V07Report,
 )
 from robot_verification.recording import ControllerRecording, Sample, Verdict
-from synthetic import command, periodic, state
+from synthetic import command, instrumentation, periodic, state
 
 INSTRUMENTATION_PERIOD_S = 0.1  # 10 Hz
 STATE_PERIOD_S = 0.01  # 100 Hz
 RESPONSE_US = 30_000  # a typical Δ
-
-
-def instrumentation(test_event_index, test_event_response_us):
-    # Until synthetic.instrumentation() carries the test event fields (request to front B).
-    return SimpleNamespace(
-        test_event_index=test_event_index, test_event_response_us=test_event_response_us
-    )
 
 
 @dataclass
@@ -76,11 +68,12 @@ class SyntheticV07Run:
     def _instrumentation_at(self, t: float):
         answered = [e for e in range(1, self.events + 1) if self._answer_s(e) <= t]
         if not answered:
-            return instrumentation(0, 0)
+            return instrumentation()
         last = answered[-1]
         jumped = self.skipped_event is not None and last >= self.skipped_event
         index = last + 1 if jumped else last
-        return instrumentation(index, self.response_us(last))
+        response_us = self.response_us(last)
+        return instrumentation(test_event_index=index, test_event_response_us=response_us)
 
     def _answer_s(self, event: int) -> float:
         return event * self.period_s + self.response_us(event) * 1e-6
