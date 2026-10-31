@@ -10,7 +10,7 @@ the message types below are for the type checker only.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Hashable, Iterable, Iterator
 from dataclasses import dataclass
 from enum import Enum
 import itertools
@@ -25,6 +25,10 @@ COMMAND_TOPIC = '/controller/command'
 STATE_TOPIC = '/controller/state'
 INSTRUMENTATION_TOPIC = '/controller/instrumentation'
 ODOMETRY_TOPIC = '/controller/odometry'
+
+# Behaviors of Command.msg; the scripts that read a bag check them against the generated message.
+TWIST, TURN_TO, GO_TO = 0, 1, 2
+BEHAVIOR_NAMES = ('TWIST', 'TURN_TO', 'GO_TO')
 
 # The float32 fields of the messages keep ~7 significant digits: 0.2 arrives as 0.20000000298.
 FLOAT32_RELATIVE_TOLERANCE = 1e-6
@@ -108,6 +112,37 @@ def find_holes[MessageT](
         for before, after in itertools.pairwise(samples)
         if after.time_s - before.time_s > max_gap_s
     ]
+
+
+def find_changes[MessageT](
+    samples: Iterable[Sample[MessageT]], read: Callable[[MessageT], Hashable]
+) -> list[Sample[MessageT]]:
+    """Return the first sample and each sample whose value differs from the one before it."""
+    changes: list[Sample[MessageT]] = []
+    for sample in samples:
+        if not changes or read(sample.message) != read(changes[-1].message):
+            changes.append(sample)
+    return changes
+
+
+def get_command_key(command: Command) -> tuple[int, float, float, float, float, float]:
+    """Return the behavior and every parameter: two commands are the same if their keys are."""
+    return (command.behavior, command.linear, command.angular, command.theta, command.x, command.y)
+
+
+def describe_command(command: Command) -> str:
+    name = BEHAVIOR_NAMES[command.behavior]
+    if command.behavior == TURN_TO:
+        return f'{name}({command.theta:.3f} rad)'
+    if command.behavior == GO_TO:
+        return f'{name}({command.x:.3f}, {command.y:.3f} m)'
+    return f'{name}({command.linear:.2f} m/s, {command.angular:.2f} rad/s)'
+
+
+def get_heading(odometry: Odometry) -> float:
+    """Return the heading in odom (rad); the pose is planar, a rotation about z only."""
+    orientation = odometry.pose.pose.orientation
+    return 2.0 * math.atan2(orientation.z, orientation.w)
 
 
 class ControllerRecording:

@@ -1,11 +1,10 @@
 """Synthetic messages and streams shared by the unit tests of the verification scripts."""
 
+import math
 import struct
 from types import SimpleNamespace
 
-from robot_verification.recording import Sample
-
-TWIST = 0  # Command.TWIST
+from robot_verification.recording import GO_TO, TURN_TO, TWIST, Sample
 
 
 def to_float32(value):
@@ -24,14 +23,30 @@ def command(linear=0.2, angular=0.0):
     )
 
 
+def turn_to(theta):
+    return SimpleNamespace(
+        behavior=TURN_TO, linear=0.0, angular=0.0, theta=to_float32(theta), x=0.0, y=0.0
+    )
+
+
+def go_to(x, y):
+    return SimpleNamespace(
+        behavior=GO_TO, linear=0.0, angular=0.0, theta=0.0, x=to_float32(x), y=to_float32(y)
+    )
+
+
 def state(echo, faults=0, reflexes=0):
     return SimpleNamespace(faults=faults, reflexes=reflexes, echo=echo)
 
 
-def odometry(linear=0.0):
-    """Return an Odometry with only the linear speed of its twist."""
+def odometry(linear=0.0, x=0.0, y=0.0, theta=0.0):
+    """Return an Odometry with a planar pose and the linear speed of its twist."""
+    orientation = SimpleNamespace(z=math.sin(theta / 2), w=math.cos(theta / 2))
     return SimpleNamespace(
-        twist=SimpleNamespace(twist=SimpleNamespace(linear=SimpleNamespace(x=linear)))
+        pose=SimpleNamespace(
+            pose=SimpleNamespace(position=SimpleNamespace(x=x, y=y), orientation=orientation)
+        ),
+        twist=SimpleNamespace(twist=SimpleNamespace(linear=SimpleNamespace(x=linear))),
     )
 
 
