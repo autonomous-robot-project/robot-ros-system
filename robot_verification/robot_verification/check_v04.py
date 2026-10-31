@@ -7,8 +7,8 @@ What: the plan asked for is delivered; for its n segments the controller runs n 
 TURN_TO -> GO_TO in order, with the vertices of the plan as the targets of the GO_TO, then
 TWIST(0, 0); the final pose of the odometry is within ε_g of p_g.
 How: the expected vertices are computed here from the recorded Path (/plan), with the rule of
-ADR 034 written again from its text, never imported from the sequencer, which would judge itself
-(F7 D5): drop the first point, replace the last by p_g and drop its neighbour vertex, absorb a
+ADR 034 written again from its text, never imported from the sequencer, which would judge itself:
+drop the first point, replace the last by p_g and drop its neighbour vertex, absorb a
 segment shorter than 2·ε_g when the removed vertex stays within res/2 of the new segment. The
 echo of the State, with consecutive equal behaviours merged, must read TWIST(0, 0), the pairs,
 TWIST(0, 0).
@@ -65,7 +65,9 @@ MIN_SEGMENTS: int = 2  # the plan has a turn
 # vertices are the same from 1e-9 to 0.1 rad (robot-docs nota 0003).
 COLLINEAR_TOLERANCE_RAD: float = 1e-3
 # A vertex in a cell next to the goal cell: one cell away, also diagonally.
-NEIGHBOUR_DISTANCE: float = RESOLUTION * math.sqrt(2) + 1e-6
+# m, the centres of the cells carry the float32 rounding of the planner (~1e-7 m at 2 m).
+CELL_CENTRE_MARGIN: float = 1e-6
+NEIGHBOUR_DISTANCE: float = RESOLUTION * math.sqrt(2) + CELL_CENTRE_MARGIN
 MAX_ABSORPTION_DEVIATION: float = RESOLUTION / 2  # res/2
 
 # Comparison of a target in the echo (float32, in odom) with a vertex (in map): well below res and
@@ -73,6 +75,8 @@ MAX_ABSORPTION_DEVIATION: float = RESOLUTION / 2  # res/2
 TARGET_TOLERANCE: float = 1e-3  # m
 # map -> odom must be the identity; the static transform is written as exact zeros and one.
 IDENTITY_TOLERANCE: float = 1e-9
+MAP_FRAME = 'map'
+ODOM_FRAME = 'odom'
 
 # Values of the messages, checked against them when a bag is read.
 TWIST: int = 0  # Command.TWIST
@@ -177,6 +181,14 @@ def extract_vertices(path_points: list[Point]) -> list[Point]:
 
 
 @dataclass(frozen=True)
+class ExpectedBehavior:
+    """A behaviour the echo must show; the target is that of a GO_TO, None otherwise."""
+
+    behavior: int
+    target: Point | None = None
+
+
+@dataclass(frozen=True)
 class EchoedBehavior:
     """
     A behaviour in force in the echo, over consecutive States; the target is that of a GO_TO.
@@ -194,6 +206,10 @@ def to_echoed_behavior(echo: Command) -> EchoedBehavior:
     return EchoedBehavior(echo.behavior, (echo.x, echo.y), is_stop)
 
 
+def is_stop_sample(sample: Sample) -> bool:
+    return to_echoed_behavior(sample.message.echo).is_stop
+
+
 def merge_repeated_behaviors(behaviors: list[EchoedBehavior]) -> list[EchoedBehavior]:
     """Merge consecutive equal behaviours; a GO_TO with a new target stays apart."""
     return [behavior for behavior, _ in itertools.groupby(behaviors)]
@@ -201,7 +217,9 @@ def merge_repeated_behaviors(behaviors: list[EchoedBehavior]) -> list[EchoedBeha
 
 def is_identity_map_to_odom(transforms: TFMessage) -> bool:
     return any(
-        t.header.frame_id == 'map' and t.child_frame_id == 'odom' and is_identity(t.transform)
+        t.header.frame_id == MAP_FRAME
+        and t.child_frame_id == ODOM_FRAME
+        and is_identity(t.transform)
         for t in transforms.transforms
     )
 
@@ -223,6 +241,13 @@ def to_points(path: Path) -> list[Point]:
     return [(pose.pose.position.x, pose.pose.position.y) for pose in path.poses]
 
 
+def find_expected_vertices(plans: Stream[Path]) -> list[Point]:
+    """Return the vertices of the first plan; empty without a plan of two points."""
+    if not plans or len(plans[0].message.poses) < 2:
+        return []
+    return extract_vertices(to_points(plans[0].message))
+
+
 class PlanRun:
     """The plan, the static transforms and the controller topics of a recording."""
 
@@ -235,6 +260,7 @@ class PlanRun:
         self.recording: ControllerRecording = recording
         self.plans: Stream[Path] = plans
         self.static_transforms: Stream[TFMessage] = static_transforms
+        self.expected_vertices: list[Point] = find_expected_vertices(plans)
 
     @classmethod
     def from_bag(cls, path: str) -> PlanRun:
@@ -248,12 +274,6 @@ class PlanRun:
         return cls(
             ControllerRecording.from_bag(path), streams[PLAN_TOPIC], streams[TF_STATIC_TOPIC]
         )
-
-    def get_expected_vertices(self) -> list[Point]:
-        """Return the vertices of the first plan; empty without a plan of two points."""
-        if not self.plans or len(self.plans[0].message.poses) < 2:
-            return []
-        return extract_vertices(to_points(self.plans[0].message))
 
     def get_echoed_behaviors(self) -> list[EchoedBehavior]:
         echoed = [to_echoed_behavior(s.message.echo) for s in self.recording.states]
@@ -277,24 +297,23 @@ class PlanRun:
         return any(is_identity_map_to_odom(s.message) for s in self.static_transforms)
 
 
-def is_stop_sample(sample: Sample) -> bool:
-    return to_echoed_behavior(sample.message.echo).is_stop
+def build_expected_behaviors(vertices: list[Point]) -> list[ExpectedBehavior]:
+    """Return the behaviours expected after the merge: TWIST(0, 0), the pairs, TWIST(0, 0)."""
+    pairs = [
+        behavior
+        for vertex in vertices
+        for behavior in (ExpectedBehavior(TURN_TO), ExpectedBehavior(GO_TO, vertex))
+    ]
+    return [ExpectedBehavior(TWIST), *pairs, ExpectedBehavior(TWIST)]
 
 
-def build_expected_behaviors(vertices: list[Point]) -> list[tuple[int, Point | None]]:
-    """Return the expected (behaviour, target) after the merge: TWIST(0, 0), pairs, TWIST(0, 0)."""
-    pairs = [pair for vertex in vertices for pair in ((TURN_TO, None), (GO_TO, vertex))]
-    return [(TWIST, None), *pairs, (TWIST, None)]
-
-
-def does_behavior_match(echoed: EchoedBehavior, expected: tuple[int, Point | None]) -> bool:
-    expected_behavior, expected_target = expected
-    if echoed.behavior != expected_behavior:
+def does_behavior_match(echoed: EchoedBehavior, expected: ExpectedBehavior) -> bool:
+    if echoed.behavior != expected.behavior:
         return False
-    if expected_behavior == TWIST:
+    if expected.behavior == TWIST:
         return echoed.is_stop
-    if expected_behavior == GO_TO:
-        return math.dist(echoed.target, expected_target) <= TARGET_TOLERANCE
+    if expected.target is not None:
+        return math.dist(echoed.target, expected.target) <= TARGET_TOLERANCE
     return True
 
 
@@ -303,7 +322,8 @@ class V04:
     The criterion and the validity conditions of V-04, and its verdict.
 
     Valid run: one plan, map -> odom as the identity, a plan with a turn and segments longer than
-    2·ε_g, and the odometry recorded after the final stop.
+    2·ε_g, and the odometry recorded after the final stop. No plan fails RF-06 before the validity:
+    a plan that never came is the failure under test.
     """
 
     def __init__(self, run: PlanRun):
@@ -334,12 +354,12 @@ class V04:
 
     def was_plan_delivered(self) -> bool:
         """RF-06: a plan of at least two points is in the recording."""
-        return bool(self.run.get_expected_vertices())
+        return bool(self.run.expected_vertices)
 
     def did_echo_follow_the_plan(self) -> bool:
         """RF-07: TWIST(0, 0), one pair TURN_TO -> GO_TO(vertex) per segment, TWIST(0, 0)."""
         echoed = self.run.get_echoed_behaviors()
-        expected = build_expected_behaviors(self.run.get_expected_vertices())
+        expected = build_expected_behaviors(self.run.expected_vertices)
         if len(echoed) != len(expected):
             return False
         return all(does_behavior_match(b, e) for b, e in zip(echoed, expected, strict=True))
@@ -357,10 +377,10 @@ class V04:
         return len(self.run.plans) == 1
 
     def has_a_turn(self) -> bool:
-        return len(self.run.get_expected_vertices()) >= MIN_SEGMENTS
+        return len(self.run.expected_vertices) >= MIN_SEGMENTS
 
     def are_segments_longer_than_two_epsilon_g(self) -> bool:
-        polyline = [P_0, *self.run.get_expected_vertices()]
+        polyline = [P_0, *self.run.expected_vertices]
         return all(math.dist(a, b) > 2 * EPSILON_G for a, b in itertools.pairwise(polyline))
 
     def was_odometry_recorded_after_the_stop(self) -> bool:
@@ -378,7 +398,7 @@ class V04Report:
 
     def __str__(self) -> str:
         v = self.verification
-        vertices = self.run.get_expected_vertices()
+        vertices = self.run.expected_vertices
         lines = [
             f'V-04: {len(self.run.plans)} plans, {len(vertices)} segments expected',
             f'  vertices {format_points(vertices)}',

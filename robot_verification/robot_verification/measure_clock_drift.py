@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 T_C_NS: int = 10_000_000  # period of the control task: the stamps are multiples of it
 CLOCK_SYNC_PERIOD_S: float = 10.0  # CLOCK_SYNC_PERIOD of the link (robot-firmware config.h)
-# Provisional, to be set from the histogram of the residuals of the V-07 bag (F7 I7): above the
+# Provisional, to be set from the histogram of the residuals of the V-07 bag: above the
 # conversion noise (a few us, to be measured), below the jump of a drift of 2 ppm in 10 s (20 us).
 JUMP_THRESHOLD_NS: int = 10_000
 MAX_RESIDUAL_NS: int = T_C_NS // 4  # beyond this the nearest multiple of T_c is ambiguous
@@ -84,22 +84,27 @@ class ClockDriftRun:
 
     def find_first_and_last_jump(self) -> tuple[int, int]:
         """Return the positions in the residuals of the first and the last jump."""
-        positions = [i for i, r in enumerate(self.residuals_ns) if abs(r) > JUMP_THRESHOLD_NS]
+        positions = self.find_jump_positions()
         return positions[0], positions[-1]
 
     def measure_duration_s(self) -> float:
         return (self.stamps_ns[-1] - self.stamps_ns[0]) / NS_PER_S
 
     def get_jumps_ns(self) -> list[int]:
-        return [r for r in self.residuals_ns if abs(r) > JUMP_THRESHOLD_NS]
+        return [self.residuals_ns[i] for i in self.find_jump_positions()]
 
     def measure_noise_ns(self) -> int:
         """Return the largest residual that is not a jump: the conversion noise."""
-        noise = [abs(r) for r in self.residuals_ns if abs(r) <= JUMP_THRESHOLD_NS]
+        jumps = set(self.find_jump_positions())
+        noise = [abs(r) for i, r in enumerate(self.residuals_ns) if i not in jumps]
         return max(noise, default=0)
 
     def measure_largest_residual_ns(self) -> int:
         return max((abs(r) for r in self.residuals_ns), default=0)
+
+    def find_jump_positions(self) -> list[int]:
+        """Return the positions of the residuals above JUMP_THRESHOLD_NS: the synchronizations."""
+        return [i for i, r in enumerate(self.residuals_ns) if abs(r) > JUMP_THRESHOLD_NS]
 
 
 class ClockDriftMeasurement:

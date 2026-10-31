@@ -9,7 +9,7 @@ notebook active and the front of the VL53L0X clear beyond d_stop; record the pla
 the sequencer, the State and the Odometry; ask the sequencer for a plan to p_g; wait for
 TWIST(0, 0) and stop the recording.
 
-The plan is asked for as in operation (F7 D4): the sequencer runs with an empty mission and
+The plan is asked for as in operation: the sequencer runs with an empty mission and
 receives /goal_pose once, published after it subscribes. The heartbeat comes from the notebook
 (`ros2 topic pub -r 10 /heartbeat std_msgs/msg/Empty`, robot-docs arquitetura.md); the script only
 checks that it has a publisher before asking for the plan. The static transforms are recorded, so

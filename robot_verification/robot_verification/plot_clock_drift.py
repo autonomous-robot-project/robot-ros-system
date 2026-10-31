@@ -103,8 +103,7 @@ def plot_residuals(run: ClockDriftRun) -> Figure:
 
 def plot_jumps(run: ClockDriftRun) -> Figure:
     times_s = get_times_s(run)
-    jumps = [(times_s[i + 1], r / NS_PER_US) for i, r in enumerate(run.residuals_ns)]
-    jumps = [(t, r) for t, r in jumps if abs(r) * NS_PER_US > JUMP_THRESHOLD_NS]
+    jumps = [(times_s[i + 1], run.residuals_ns[i] / NS_PER_US) for i in run.find_jump_positions()]
     figure, axis = plt.subplots(figsize=FIGURE_SIZE)
     axis.plot([t for t, _ in jumps], [r for _, r in jumps], 'o', color=SERIES, markersize=4)
     if len(jumps) >= 2:
