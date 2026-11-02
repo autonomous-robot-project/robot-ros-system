@@ -17,7 +17,7 @@ from robot_verification.check_v04 import (
     extract_vertices,
 )
 from robot_verification.recording import ControllerRecording, Sample, Stream, Verdict
-from synthetic import state, to_float32
+from synthetic import odometry, state, to_float32
 
 # Raw vertices of the Path of Theta* on M (robot-docs nota 0003): the centre of the start cell,
 # a one-cell diagonal facet at the corner of the wall, and the goal reached through a
@@ -87,13 +87,6 @@ def echo(behavior, x=0.0, y=0.0, theta=0.0):
     )
 
 
-def odometry_at(x, y):
-    # Until synthetic.odometry() carries the pose (request to front B).
-    return SimpleNamespace(
-        pose=SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(x=x, y=y)))
-    )
-
-
 @dataclass
 class SyntheticV04Run:
     """
@@ -119,11 +112,12 @@ class SyntheticV04Run:
         # Cut half a second before the final TWIST(0, 0) starts.
         cut_s = end_s - FINAL_STOP_S - 0.5
         odometry_end_s = cut_s if self.odometry_ends_early else end_s
-        odometry = [
-            Sample(k * ODOMETRY_PERIOD_S, odometry_at(*self.final_position))
+        final_x, final_y = self.final_position
+        odometry_samples = [
+            Sample(k * ODOMETRY_PERIOD_S, odometry(x=final_x, y=final_y))
             for k in range(round(odometry_end_s / ODOMETRY_PERIOD_S) + 1)
         ]
-        recording = ControllerRecording([], states, [], odometry)
+        recording = ControllerRecording([], states, [], odometry_samples)
         plans = [Sample(0.5, path(densify(self.raw_plan))) for _ in range(self.plans)]
         transforms = [Sample(0.0, map_to_odom(self.map_to_odom_x))]
         return PlanRun(recording, Stream(plans), Stream(transforms))
