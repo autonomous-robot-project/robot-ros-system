@@ -14,6 +14,9 @@ command a call returns, and republishes `command` on its timer (ADR 033).
   (ADR 032). Abort ends the mission with TWIST(0, 0); recover runs its steps and then enters the
   current step again, with a new pose; ignore leaves the step running. With several codes
   activated at once, abort comes first, then recover.
+- A TURN_TO above θ_max turns θ_max toward the target and, once there, enters the step again;
+  a TURN_TO or GO_TO that comes to rest out of its tolerance after moving raises NO_PROGRESS,
+  which gets its reaction like a code (ADR 036).
 A step whose target is a vertex of the plan has no target without map -> odom: the mission
 aborts, the only reaction to TF_MISSING (ADR 035).
 The mission begins on the first Odometry, since a step needs the pose; a State before it is
@@ -33,11 +36,14 @@ from robot_sequencer.mission import (
     Cleared,
     Code,
     Command,
+    HeadingReached,
     MissingTransformError,
     Mission,
     OdometryReading,
+    PositionReached,
     Recover,
     Step,
+    limit_turn,
 )
 
 
@@ -48,13 +54,20 @@ class MissionStatus(Enum):
     ABORTED = auto()
 
 
-@dataclass(frozen=True)
+@dataclass
 class RunningStep:
     index: int  # of the mission step; a recovery step keeps the index of the step it returns to
     step: Step
     start: Pose
     command: Command
     is_recovery: bool
+    is_partial_turn: bool  # a TURN_TO cut to θ_max: the step is entered again at its end
+    was_moving: bool = False  # on the previous Odometry of the step
+
+    def has_stalled(self, reading: OdometryReading) -> bool:
+        """Return whether the robot just came to rest out of the tolerance of the step."""
+        has_tolerance = isinstance(self.step.termination, HeadingReached | PositionReached)
+        return has_tolerance and self.was_moving and reading.is_at_rest
 
     def is_done_by_reading(self, reading: OdometryReading) -> bool:
         termination = self.step.termination
@@ -94,8 +107,14 @@ class Sequencer:
         self._pose = reading.pose
         if self._status is MissionStatus.WAITING:
             return self._enter_step(0)
-        if self._running is not None and self._running.is_done_by_reading(reading):
-            return self._end_step(self._running)
+        running = self._running
+        if running is None:
+            return None
+        if running.is_done_by_reading(reading):
+            return self._end_step(running)
+        if running.has_stalled(reading):
+            return self._react_to(running, frozenset({Code.NO_PROGRESS}))
+        running.was_moving = not reading.is_at_rest
         return None
 
     def on_state(self, active_codes: frozenset[Code]) -> Command | None:
@@ -122,23 +141,37 @@ class Sequencer:
         return None
 
     def _end_step(self, running: RunningStep) -> Command:
-        """Enter what follows: after a recovery step, the step it returns to; else the next."""
+        """Enter the same step after a partial turn, else what follows a recovery or the step."""
+        if running.is_partial_turn:
+            return self._begin_step(running.step, running.index, running.is_recovery)
         return self._enter_step(running.index if running.is_recovery else running.index + 1)
 
     def _enter_step(self, index: int) -> Command:
         """Enter the next recovery step if any is left, else the mission step at index."""
-        assert self._pose is not None  # a step only begins after the first Odometry
         if self._recovery:
             step, is_recovery = self._recovery.pop(0), True
         elif index == len(self._mission.steps):
             return self._finish(MissionStatus.SUCCEEDED)
         else:
             step, is_recovery = self._mission.steps[index], False
+        return self._begin_step(step, index, is_recovery)
+
+    def _begin_step(self, step: Step, index: int, is_recovery: bool) -> Command:
+        """Resolve the step from the latest pose and forget the codes seen before (ADR 037)."""
+        assert self._pose is not None  # a step only begins after the first Odometry
         try:
-            command = step.behavior.resolve(self._pose, self._get_map_to_odom())
+            target_command = step.behavior.resolve(self._pose, self._get_map_to_odom())
         except MissingTransformError:
             return self._finish(MissionStatus.ABORTED)  # the only reaction to TF_MISSING
-        self._running = RunningStep(index, step, self._pose, command, is_recovery)
+        command = limit_turn(target_command, self._pose)
+        self._running = RunningStep(
+            index,
+            step,
+            self._pose,
+            command,
+            is_recovery,
+            is_partial_turn=command != target_command,
+        )
         self._seen_codes = frozenset()
         self._status = MissionStatus.RUNNING
         return command

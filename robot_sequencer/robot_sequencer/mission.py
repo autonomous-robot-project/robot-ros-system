@@ -14,7 +14,7 @@ Domain without ROS (ADR 047): the node converts the messages to these types.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 import math
 
@@ -25,6 +25,9 @@ from robot_sequencer.geometry import Point, Pose, wrap_angle
 # 3.6 deg + 3.9 deg per edge of one wheel, and 6 mm + 10 mm per pulse.
 EPSILON_THETA: float = math.radians(10.0)  # rad, ε_θ
 EPSILON_D: float = 0.05  # m, ε_d
+# Largest turn of one TURN_TO, so no target reaches 180 deg from the heading (ADRs 024 and 036):
+# the starting point of ADR 036, with margin over the 4.5 deg per pulse of the odometry.
+THETA_MAX: float = math.radians(170.0)  # rad, θ_max
 
 
 class Behavior(Enum):
@@ -51,6 +54,14 @@ class Command:
 STOP = Command(Behavior.TWIST)
 
 
+def limit_turn(command: Command, pose: Pose) -> Command:
+    """Return the command with a TURN_TO above θ_max cut to θ_max, toward the target (ADR 036)."""
+    turn = wrap_angle(command.theta - pose.theta)
+    if command.behavior is not Behavior.TURN_TO or abs(turn) <= THETA_MAX:
+        return command
+    return replace(command, theta=wrap_angle(pose.theta + math.copysign(THETA_MAX, turn)))
+
+
 @dataclass(frozen=True)
 class OdometryReading:
     pose: Pose
@@ -75,6 +86,7 @@ class Code(Enum):
     UNKNOWN = auto()  # a bit the sequencer does not know yet: the default reaction still applies
     # Events of the sequencer.
     TF_MISSING = auto()  # no map -> odom at the entry of a step with a MapPoint (ADR 035)
+    NO_PROGRESS = auto()  # at rest out of tolerance, after moving in the step (ADR 036)
 
 
 # Codes of a failure that leaves the step without a target: their only reaction is abort.
