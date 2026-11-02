@@ -3,13 +3,13 @@ Charts of the clock drift between the ESP32 and the RPi (ADR 027) from the bag o
 
 Criticality: T2, product (robot-docs codigo.md).
 
-The reconstructed offset over time, a staircase whose slope is the drift; the histogram of the
-residuals, where the conversion noise and the jumps separate and JUMP_THRESHOLD_NS is chosen; the
-jumps over time, whose spread is the error of the synchronization. The numbers come from
-measure_clock_drift.
+The phase of each stamp over time, with the lowest per window, a staircase whose slope is the
+drift; the histogram of the change of the low between consecutive windows, where the flatness of
+the plateaus and the steps separate and JUMP_THRESHOLD_NS is chosen; the steps over time, whose
+spread is the error of the synchronization. The numbers come from measure_clock_drift.
 
 Usage: plot_clock_drift <bag directory> <output prefix>. Writes <prefix>_offset.png,
-<prefix>_residuos.png and <prefix>_saltos.png.
+<prefix>_janelas.png and <prefix>_saltos.png.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ SERIES, MUTED, GRID, SURFACE = '#2a78d6', '#52514e', '#e4e3df', '#fcfcfb'
 FIGURE_SIZE = (6.0, 3.0)  # in, the width of a column of the monograph
 DPI = 150
 HISTOGRAM_BINS = 60
-SMALLEST_RESIDUAL_US = 0.1  # left end of the logarithmic axis; a zero residual is put here
+SMALLEST_CHANGE_US = 0.1  # left end of the logarithmic axis; a zero change is put here
 
 plt.rcParams.update(
     {
@@ -60,27 +60,48 @@ def get_times_s(run: ClockDriftRun) -> list[float]:
     return [(stamp - run.stamps_ns[0]) / NS_PER_S for stamp in run.stamps_ns]
 
 
-def get_offsets_us(run: ClockDriftRun) -> list[float]:
-    """Return the reconstructed offset at each stamp, from the first, in us."""
-    offsets_ns = itertools.accumulate(run.residuals_ns, initial=0)
-    return [offset / NS_PER_US for offset in offsets_ns]
+def get_window_starts_s(run: ClockDriftRun) -> list[float]:
+    return [window.start_ns / NS_PER_S for window in run.windows]
+
+
+def get_window_lows_us(run: ClockDriftRun) -> list[float]:
+    return [window.lowest_phase_ns / NS_PER_US for window in run.windows]
 
 
 def plot_offset(run: ClockDriftRun) -> Figure:
     figure, axis = plt.subplots(figsize=FIGURE_SIZE)
-    axis.step(get_times_s(run), get_offsets_us(run), where='post', color=SERIES, linewidth=2)
-    axis.set_title(f'offset reconstruído: deriva {run.measure_drift_ppm():+.2f} ppm', loc='left')
+    phases_us = [phase / NS_PER_US for phase in run.phases_ns]
+    axis.plot(get_times_s(run), phases_us, '.', color=MUTED, markersize=1.5, label='carimbo')
+    axis.step(
+        get_window_starts_s(run),
+        get_window_lows_us(run),
+        where='post',
+        color=SERIES,
+        linewidth=2,
+        label='mínimo da janela',
+    )
+    axis.set_title(f'fase dos carimbos: deriva {run.measure_drift_ppm():+.2f} ppm', loc='left')
     axis.set_xlabel('tempo desde o primeiro carimbo (s)')
-    axis.set_ylabel('offset (µs)')
+    axis.set_ylabel('fase (µs)')
+    axis.legend(loc='best')
     figure.tight_layout()
     return figure
 
 
-def plot_residuals(run: ClockDriftRun) -> Figure:
-    residuals_us = [max(abs(r) / NS_PER_US, SMALLEST_RESIDUAL_US) for r in run.residuals_ns]
-    edges = np.geomspace(SMALLEST_RESIDUAL_US, max(residuals_us) * 1.5, HISTOGRAM_BINS)
+def get_window_changes_us(run: ClockDriftRun) -> list[float]:
+    """Return the change of the low between consecutive windows, in us, at least the axis end."""
+    lows_us = get_window_lows_us(run)
+    return [
+        max(abs(after - before), SMALLEST_CHANGE_US)
+        for before, after in itertools.pairwise(lows_us)
+    ]
+
+
+def plot_window_changes(run: ClockDriftRun) -> Figure:
+    changes_us = get_window_changes_us(run)
+    edges = np.geomspace(SMALLEST_CHANGE_US, max(changes_us) * 1.5, HISTOGRAM_BINS)
     figure, axis = plt.subplots(figsize=FIGURE_SIZE)
-    axis.hist(residuals_us, bins=edges, color=SERIES, edgecolor=SURFACE, linewidth=0.5)
+    axis.hist(changes_us, bins=edges, color=SERIES, edgecolor=SURFACE, linewidth=0.5)
     threshold_us = JUMP_THRESHOLD_NS / NS_PER_US
     axis.axvline(threshold_us, color=MUTED, linestyle='--', linewidth=1)
     axis.annotate(
@@ -94,16 +115,19 @@ def plot_residuals(run: ClockDriftRun) -> Figure:
     )
     axis.set_xscale('log')
     axis.set_yscale('log')
-    axis.set_title('|resíduo| de cada intervalo até o múltiplo de T_c', loc='left')
-    axis.set_xlabel('|resíduo| (µs)')
-    axis.set_ylabel('intervalos')
+    axis.set_title('variação do mínimo da fase entre janelas consecutivas', loc='left')
+    axis.set_xlabel('|variação| (µs)')
+    axis.set_ylabel('pares de janelas')
     figure.tight_layout()
     return figure
 
 
 def plot_jumps(run: ClockDriftRun) -> Figure:
-    times_s = get_times_s(run)
-    jumps = [(times_s[i + 1], run.residuals_ns[i] / NS_PER_US) for i in run.find_jump_positions()]
+    starts_s = get_window_starts_s(run)
+    jumps = [
+        (starts_s[position], jump_ns / NS_PER_US)
+        for position, jump_ns in zip(run.find_jump_positions(), run.get_jumps_ns(), strict=True)
+    ]
     figure, axis = plt.subplots(figsize=FIGURE_SIZE)
     axis.plot([t for t, _ in jumps], [r for _, r in jumps], 'o', color=SERIES, markersize=4)
     if len(jumps) >= 2:
@@ -127,7 +151,7 @@ def main() -> None:
     run = ClockDriftRun(ControllerRecording.from_bag(sys.argv[1]))
     prefix = sys.argv[2]
     plot_offset(run).savefig(f'{prefix}_offset.png', dpi=DPI)
-    plot_residuals(run).savefig(f'{prefix}_residuos.png', dpi=DPI)
+    plot_window_changes(run).savefig(f'{prefix}_janelas.png', dpi=DPI)
     plot_jumps(run).savefig(f'{prefix}_saltos.png', dpi=DPI)
 
 
