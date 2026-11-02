@@ -16,6 +16,9 @@ V-01, sequencing rule (failure is the activation of a code in the State; abort i
 θ₁ = heading at the end of S1 + π/2; (x₁, y₁) = position at the end of S1 + d₂ (cos θ₁, sin θ₁).
 S4 is the TWIST(0, 0) the sequencer sends at the end or the abort of a mission.
 
+The missions of V-01 and V-07 run without the notebook, so they ignore HEARTBEAT_LOST (ADR 038,
+F6 D3); any other event of the sequencer aborts them.
+
 V-07, repetition rule: TWIST(v_r, 0) -> activation of the test code -> TWIST(0, 0) -> its
 deactivation -> TWIST(v_r, 0). The controller activates FAULT_TEST every T_ev and clears it when
 the TWIST(0, 0) arrives (ADR 049); any other code aborts, the default.
@@ -51,6 +54,9 @@ from robot_sequencer.mission import (
     wait_until_clear,
 )
 
+# The missions of the verifications run without the heartbeat of the notebook (ADR 038).
+WITHOUT_NOTEBOOK = {Code.HEARTBEAT_LOST: Ignore()}
+
 # Parameters of V-01.
 V_1: float = 0.2  # m/s, v₁: d₁ / v₁ = 5 s, time to lock a wheel by hand during S1
 D_1: float = 1.0  # m, d₁
@@ -65,7 +71,8 @@ def build_v01_mission() -> Mission:
             Step(Twist(V_1, 0.0), until=DistanceFromStart(D_1)),  # S1
             Step(TurnTo(HeadingTo(corner))),  # S2
             Step(GoTo(corner)),  # S3
-        ]
+        ],
+        reactions=WITHOUT_NOTEBOOK,
     )
 
 
@@ -76,7 +83,10 @@ V_R: float = 0.2  # m/s, v_r, commanded before each event
 def build_v07_mission() -> Mission:
     return Mission(
         steps=[Step(Twist(V_R, 0.0), until=Never())],
-        reactions={Code.FAULT_TEST: Recover([wait_until_clear(Code.FAULT_TEST)])},
+        reactions={
+            **WITHOUT_NOTEBOOK,
+            Code.FAULT_TEST: Recover([wait_until_clear(Code.FAULT_TEST)]),
+        },
     )
 
 

@@ -17,6 +17,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 import math
+import struct
 
 from robot_sequencer.geometry import Point, Pose, wrap_angle
 
@@ -38,6 +39,10 @@ class Behavior(Enum):
     GO_TO = 2
 
 
+def round_value_to_float32(value: float) -> float:
+    return struct.unpack('f', struct.pack('f', value))[0]
+
+
 @dataclass(frozen=True)
 class Command:
     """Behavior and parameters sent to the controller; the unused fields are zero."""
@@ -48,6 +53,20 @@ class Command:
     theta: float = 0.0  # rad in odom, TURN_TO
     x: float = 0.0  # m in odom, GO_TO
     y: float = 0.0  # m in odom, GO_TO
+
+    def is_echoed_by(self, echo: Command) -> bool:
+        return self.round_to_float32() == echo
+
+    def round_to_float32(self) -> Command:
+        """Return the command as it travels in the float32 fields of Command.msg."""
+        return Command(
+            self.behavior,
+            linear=round_value_to_float32(self.linear),
+            angular=round_value_to_float32(self.angular),
+            theta=round_value_to_float32(self.theta),
+            x=round_value_to_float32(self.x),
+            y=round_value_to_float32(self.y),
+        )
 
 
 # TWIST(0, 0): the command when no mission runs, after its end and after an abort (ADR 030).
@@ -87,6 +106,15 @@ class Code(Enum):
     # Events of the sequencer.
     TF_MISSING = auto()  # no map -> odom at the entry of a step with a MapPoint (ADR 035)
     NO_PROGRESS = auto()  # at rest out of tolerance, after moving in the step (ADR 036)
+    COMMAND_NOT_ECHOED = auto()  # the echo differs from the command for more than T_eco (ADR 037)
+    LINK_LOST = auto()  # no State for more than T_LINK (ADR 037)
+    HEARTBEAT_LOST = auto()  # no heartbeat of the notebook for more than T_HB (ADR 037)
+
+
+@dataclass(frozen=True)
+class StateReading:
+    codes: frozenset[Code]  # active, from the masks of the State
+    echo: Command  # command in force in the controller this cycle
 
 
 # Codes of a failure that leaves the step without a target: their only reaction is abort.

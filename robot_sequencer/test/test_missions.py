@@ -8,11 +8,17 @@ from robot_sequencer.mission import (
     GoTo,
     HeadingReached,
     OdometryReading,
+    StateReading,
     TurnTo,
     Twist,
 )
 from robot_sequencer.missions import D_1, MISSIONS, V_1, V_R, build_v01_mission, build_v07_mission
 from robot_sequencer.sequencer import MissionStatus, Sequencer
+
+
+def report(sequencer: Sequencer, codes: frozenset[Code], now: float = 0.0) -> Command | None:
+    """Send a State at now that echoes the command in force."""
+    return sequencer.on_state(StateReading(codes, echo=sequencer.command.round_to_float32()), now)
 
 
 def test_v01_has_the_steps_of_its_sequencing_rule():
@@ -53,15 +59,15 @@ def test_v07_repeats_twist_vr_then_stop_until_the_test_code_clears():
 
     assert forward == Command(Behavior.TWIST, linear=V_R)
     for _ in range(2):
-        assert sequencer.on_state(test_code) == STOP
-        assert sequencer.on_state(frozenset()) == forward
+        assert report(sequencer, test_code) == STOP
+        assert report(sequencer, frozenset()) == forward
 
 
 def test_v07_aborts_on_any_other_code():
     sequencer = Sequencer(build_v07_mission())
     sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), 0.0, 0.0))
 
-    assert sequencer.on_state(frozenset({Code.FAULT_DEADLINE_MISSED})) == STOP
+    assert report(sequencer, frozenset({Code.FAULT_DEADLINE_MISSED})) == STOP
     assert sequencer.status is MissionStatus.ABORTED
 
 

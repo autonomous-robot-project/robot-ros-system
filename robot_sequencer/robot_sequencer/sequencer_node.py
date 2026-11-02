@@ -4,9 +4,11 @@ Node of the sequencer: translates the topics of the controller into calls to the
 Criticality: T2, product (robot-docs codigo.md).
 
 One node, one thread (ADRs 031 and 033): the State (100 Hz) and the Odometry (20 Hz) of the
-controller go to the Sequencer, a command it returns is published in the same callback, and a
-timer republishes the command in force at f_cmd so it does not expire (RNF-02). With no mission
-running the command is TWIST(0, 0). The mission comes from the parameter `mission`
+controller and the heartbeat of the notebook go to the Sequencer, a command it returns is
+published in the same callback, and a timer checks the ages of the State and of the heartbeat
+(ADR 037) and republishes the command in force at f_cmd so it does not expire (RNF-02). The times
+come from the steady clock, so an adjustment of the system clock does not age a message. With no
+mission running the command is TWIST(0, 0). The mission comes from the parameter `mission`
 (arquitetura.md). The node holds no logic of its own: the domain is in sequencer.py and
 mission.py (ADR 047).
 
@@ -18,20 +20,23 @@ import math
 
 from nav_msgs.msg import Odometry
 import rclpy
+from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from robot_interfaces.msg import Command as CommandMessage
 from robot_interfaces.msg import State
+from std_msgs.msg import Empty
 
 from robot_sequencer.geometry import Point, Pose
-from robot_sequencer.mission import Code, Command, OdometryReading
+from robot_sequencer.mission import Behavior, Code, Command, OdometryReading, StateReading
 from robot_sequencer.missions import MISSIONS
 from robot_sequencer.sequencer import Sequencer
 
 COMMAND_TOPIC = '/controller/command'
 STATE_TOPIC = '/controller/state'
 ODOMETRY_TOPIC = '/controller/odometry'
+HEARTBEAT_TOPIC = '/heartbeat'  # std_msgs/Empty at 10 Hz from the notebook (arquitetura.md)
 
 # QoS of every topic of the link (ADR 025), the same as robot_verification/link.py.
 LINK_QOS = QoSProfile(
@@ -42,6 +47,7 @@ LINK_QOS = QoSProfile(
 )
 
 COMMAND_PERIOD_S: float = 0.05  # 1 / f_cmd, f_cmd = 20 Hz (ADR 033)
+NS_PER_S: float = 1e9
 
 FAULT_CODES: dict[int, Code] = {
     State.FAULT_COGNIZANT: Code.FAULT_COGNIZANT,
@@ -66,6 +72,21 @@ def get_codes_of_mask(mask: int, codes: dict[int, Code]) -> frozenset[Code]:
     """Return the code of each set bit; a bit not in `codes` is Code.UNKNOWN."""
     bits = (1 << position for position in range(MASK_BITS))
     return frozenset(codes.get(bit, Code.UNKNOWN) for bit in bits if mask & bit)
+
+
+def get_command(message: CommandMessage) -> Command:
+    return Command(
+        Behavior(message.behavior),
+        linear=message.linear,
+        angular=message.angular,
+        theta=message.theta,
+        x=message.x,
+        y=message.y,
+    )
+
+
+def get_state_reading(state: State) -> StateReading:
+    return StateReading(get_active_codes(state), echo=get_command(state.echo))
 
 
 def get_odometry_reading(odometry: Odometry) -> OdometryReading:
@@ -102,23 +123,37 @@ class SequencerNode(Node):
         self._commands = self.create_publisher(CommandMessage, COMMAND_TOPIC, LINK_QOS)
         self.create_subscription(State, STATE_TOPIC, self._on_state, LINK_QOS)
         self.create_subscription(Odometry, ODOMETRY_TOPIC, self._on_odometry, LINK_QOS)
-        self.create_timer(COMMAND_PERIOD_S, self._republish_command)
+        self.create_subscription(Empty, HEARTBEAT_TOPIC, self._on_heartbeat, LINK_QOS)
+        self._steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
+        self.create_timer(COMMAND_PERIOD_S, self._on_timer)
         self.get_logger().info(f'mission {mission_name}: waiting for the first Odometry')
 
     def _on_state(self, state: State) -> None:
-        self._publish_if_new(self._sequencer.on_state(get_active_codes(state)))
+        self._publish_if_new(self._sequencer.on_state(get_state_reading(state), self._get_now_s()))
 
     def _on_odometry(self, odometry: Odometry) -> None:
         self._publish_if_new(self._sequencer.on_odometry(get_odometry_reading(odometry)))
 
-    def _republish_command(self) -> None:
+    def _on_heartbeat(self, _: Empty) -> None:
+        self._sequencer.on_heartbeat(self._get_now_s())
+
+    def _on_timer(self) -> None:
+        """Publish the command in force, the new one if an age activated a code."""
+        self._log_if_new(self._sequencer.on_timer(self._get_now_s()))
         self._commands.publish(build_command_message(self._sequencer.command))
 
     def _publish_if_new(self, command: Command | None) -> None:
         if command is None:
             return
         self._commands.publish(build_command_message(command))
-        self.get_logger().info(f'{self._sequencer.status.name}: {command}')
+        self._log_if_new(command)
+
+    def _log_if_new(self, command: Command | None) -> None:
+        if command is not None:
+            self.get_logger().info(f'{self._sequencer.status.name}: {command}')
+
+    def _get_now_s(self) -> float:
+        return self._steady_clock.now().nanoseconds / NS_PER_S
 
 
 def main() -> None:

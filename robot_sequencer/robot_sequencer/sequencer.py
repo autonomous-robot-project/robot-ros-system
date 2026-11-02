@@ -3,8 +3,9 @@ Engine of the sequencer: runs a mission step by step and reacts to the codes of 
 
 Criticality: T2, product (robot-docs codigo.md).
 
-The node calls on_odometry (20 Hz) and on_state (100 Hz) in one thread, publishes right away the
-command a call returns, and republishes `command` on its timer (ADR 033).
+The node calls on_odometry (20 Hz), on_state (100 Hz), on_heartbeat and on_timer (20 Hz) in one
+thread, publishes right away the command a call returns, and republishes `command` on its timer
+(ADR 033).
 - A step begins with the pose of the latest Odometry: its behavior is resolved to a command, and
   the codes seen before are forgotten, so a code already active counts as activated (ADR 037).
 - The termination of the step is tested where its input changes: a pose on each Odometry, a code
@@ -17,6 +18,12 @@ command a call returns, and republishes `command` on its timer (ADR 033).
 - A TURN_TO above θ_max turns θ_max toward the target and, once there, enters the step again;
   a TURN_TO or GO_TO that comes to rest out of its tolerance after moving raises NO_PROGRESS,
   which gets its reaction like a code (ADR 036).
+- The sequencer watches the link and the notebook (ADR 037) with three conditions that join the
+  codes of the State: COMMAND_NOT_ECHOED (the echo differs from the command for more than T_eco),
+  LINK_LOST (no State for more than T_LINK, counted from the first State) and HEARTBEAT_LOST (no
+  heartbeat for more than T_HB, or none yet). The State checks the echo; the timer checks the
+  ages, since no callback runs when the messages stop. When the State comes back after LINK_LOST,
+  the codes seen before are forgotten, as at the entry of a step.
 A step whose target is a vertex of the plan has no target without map -> odom: the mission
 aborts, the only reaction to TF_MISSING (ADR 035).
 The mission begins on the first Odometry, since a step needs the pose; a State before it is
@@ -42,9 +49,18 @@ from robot_sequencer.mission import (
     OdometryReading,
     PositionReached,
     Recover,
+    StateReading,
     Step,
     limit_turn,
 )
+
+# Thresholds of the monitors (ADR 037), times in s.
+COMMAND_EXPIRY_S: float = 0.2  # T_cmd: the controller expires a command after it (RNF-02)
+LINK_TIMEOUT_S: float = COMMAND_EXPIRY_S  # T_LINK = T_cmd: the controller has stopped by then
+# T_cmd + 2 periods of republication; 34 times the worst latency command -> echo, 8.8 ms
+# (robot-docs nota 0006, F7 D3).
+ECHO_TIMEOUT_S: float = 0.3  # T_eco
+HEARTBEAT_TIMEOUT_S: float = 0.5  # T_HB
 
 
 class MissionStatus(Enum):
@@ -92,6 +108,10 @@ class Sequencer:
         self._recovery: list[Step] = []  # steps of a recover still to run
         self._seen_codes: frozenset[Code] = frozenset()
         self._pose: Pose | None = None
+        self._controller_codes: frozenset[Code] = frozenset()  # of the latest State
+        self._last_state_s: float | None = None
+        self._last_heartbeat_s: float | None = None
+        self._echo_differs_since_s: float | None = None
 
     @property
     def status(self) -> MissionStatus:
@@ -117,10 +137,26 @@ class Sequencer:
         running.was_moving = not reading.is_at_rest
         return None
 
-    def on_state(self, active_codes: frozenset[Code]) -> Command | None:
+    def on_state(self, state: StateReading, now: float) -> Command | None:
         """Return the new command if a code was activated or cleared and the step changes."""
+        if self._is_link_lost(now):
+            self._seen_codes = frozenset()  # the link is back (ADR 037)
+        self._last_state_s = now
+        self._controller_codes = state.codes
+        self._track_echo(state.echo, now)
+        return self._update_codes(now)
+
+    def on_heartbeat(self, now: float) -> None:
+        self._last_heartbeat_s = now
+
+    def on_timer(self, now: float) -> Command | None:
+        """Return the new command if the age of the State or of the heartbeat activates a code."""
+        return self._update_codes(now)
+
+    def _update_codes(self, now: float) -> Command | None:
         if self._running is None:
             return None
+        active_codes = self._controller_codes | self._get_own_codes(now)
         activated = active_codes - self._seen_codes
         self._seen_codes = active_codes
         reaction = self._react_to(self._running, activated)
@@ -129,6 +165,27 @@ class Sequencer:
         if self._running.is_done_by_codes(active_codes):
             return self._end_step(self._running)
         return None
+
+    def _get_own_codes(self, now: float) -> frozenset[Code]:
+        codes: set[Code] = set()
+        if self._echo_differs_since_s is not None:
+            if now - self._echo_differs_since_s > ECHO_TIMEOUT_S:
+                codes.add(Code.COMMAND_NOT_ECHOED)
+        if self._is_link_lost(now):
+            codes.add(Code.LINK_LOST)
+        if self._last_heartbeat_s is None or now - self._last_heartbeat_s > HEARTBEAT_TIMEOUT_S:
+            codes.add(Code.HEARTBEAT_LOST)
+        return frozenset(codes)
+
+    def _is_link_lost(self, now: float) -> bool:
+        return self._last_state_s is not None and now - self._last_state_s > LINK_TIMEOUT_S
+
+    def _track_echo(self, echo: Command, now: float) -> None:
+        """Note when the echo began to differ from the command in force."""
+        if self.command.is_echoed_by(echo):
+            self._echo_differs_since_s = None
+        elif self._echo_differs_since_s is None:
+            self._echo_differs_since_s = now
 
     def _react_to(self, running: RunningStep, activated: frozenset[Code]) -> Command | None:
         reactions = [self._mission.get_reaction(running.step, code) for code in activated]
