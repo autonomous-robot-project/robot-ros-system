@@ -1,5 +1,5 @@
 """
-The link to the controller, shared by the bench scripts: QoS, micro-ROS agent, bag recorder.
+The link to the controller, shared by the bench scripts: QoS, agent, sequencer, launch, bag.
 
 Criticality: T2, product (robot-docs codigo.md).
 """
@@ -28,6 +28,8 @@ AGENT_ARGUMENTS = ['serial', '--dev', '/dev/ttyAMA0', '-b', '921600']  # UART of
 # Real-time priority of the agent and the sequencer (ADR 039): `chrt` replaces itself with the
 # agent, so SIGTERM still reaches it. Needs `rtprio 50` in limits.d on the RPi.
 REALTIME_PREFIX = ['chrt', '-f', '50']
+# The launch of the deliberator of C1 takes 3.6 s to exit on SIGINT (robot-docs nota 0019).
+LAUNCH_STOP_S = 10.0
 
 
 class MicroRosAgent:
@@ -89,6 +91,27 @@ class SequencerProcess:
         if self._process.poll() is None:
             self._process.terminate()
         self._process.wait()
+
+
+class RosLaunch:
+    """`ros2 launch` of a launch file, as a child process."""
+
+    def __init__(self, package, launch_file):
+        self._command = ['ros2', 'launch', package, launch_file]
+        self._process = None
+
+    def __enter__(self):
+        self._process = subprocess.Popen(self._command)
+        return self
+
+    def __exit__(self, *_exception):
+        # SIGINT, not SIGTERM: ros2 launch stopped by SIGTERM left its nodes running
+        # (robot-docs nota 0003).
+        self._process.send_signal(signal.SIGINT)
+        try:
+            self._process.wait(timeout=LAUNCH_STOP_S)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
 
 
 class BagRecorder:
