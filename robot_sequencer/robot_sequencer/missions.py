@@ -19,6 +19,10 @@ S4 is the TWIST(0, 0) the sequencer sends at the end or the abort of a mission.
 The missions of V-01 and V-07 run without the notebook, so they ignore HEARTBEAT_LOST (ADR 038,
 F6 D3); any other event of the sequencer aborts them.
 
+V-08: the mission of V-07 under load. Under C2 the link may lag, and the expected effect is the
+expiry of the command (RNF-02), which also leaves the echo in TWIST(0, 0): the mission ignores
+LINK_LOST and COMMAND_NOT_ECHOED as well (ADR 038, F7 D3).
+
 V-07, repetition rule: TWIST(v_r, 0) -> activation of the test code -> TWIST(0, 0) -> its
 deactivation -> TWIST(v_r, 0). The controller activates FAULT_TEST every T_ev and clears it when
 the TWIST(0, 0) arrives (ADR 049); any other code aborts, the default.
@@ -107,7 +111,14 @@ def build_plan_mission(vertices: Sequence[Point]) -> Mission:
     return Mission(steps, reactions={Code.FAULT_DEADLINE_MISSED: Ignore()})
 
 
+def build_v08_mission() -> Mission:
+    v07 = build_v07_mission()
+    under_load = {Code.LINK_LOST: Ignore(), Code.COMMAND_NOT_ECHOED: Ignore()}
+    return Mission(v07.steps, reactions={**v07.reactions, **under_load})
+
+
 MISSIONS: dict[str, Callable[[], Mission]] = {
     'v01': build_v01_mission,
     'v07': build_v07_mission,
+    'v08': build_v08_mission,
 }

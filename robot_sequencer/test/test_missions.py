@@ -12,8 +12,16 @@ from robot_sequencer.mission import (
     TurnTo,
     Twist,
 )
-from robot_sequencer.missions import D_1, MISSIONS, V_1, V_R, build_v01_mission, build_v07_mission
-from robot_sequencer.sequencer import MissionStatus, Sequencer
+from robot_sequencer.missions import (
+    D_1,
+    MISSIONS,
+    V_1,
+    V_R,
+    build_v01_mission,
+    build_v07_mission,
+    build_v08_mission,
+)
+from robot_sequencer.sequencer import ECHO_TIMEOUT_S, MissionStatus, Sequencer
 
 
 def report(sequencer: Sequencer, codes: frozenset[Code], now: float = 0.0) -> Command | None:
@@ -73,3 +81,37 @@ def test_v07_aborts_on_any_other_code():
 
 def test_the_node_parameter_names_v07():
     assert MISSIONS['v07'] is build_v07_mission
+
+
+def test_v08_repeats_like_v07():
+    sequencer = Sequencer(build_v08_mission())
+    forward = sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), 0.0, 0.0))
+
+    assert forward == Command(Behavior.TWIST, linear=V_R)
+    assert report(sequencer, frozenset({Code.FAULT_TEST})) == STOP
+    assert report(sequencer, frozenset()) == forward
+
+
+def test_v08_goes_on_through_an_expired_command_and_a_lost_link():
+    sequencer = Sequencer(build_v08_mission())
+    sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), 0.0, 0.0))
+    report(sequencer, frozenset(), now=0.0)
+    expired = StateReading(frozenset(), echo=STOP)  # the controller expired the command
+
+    assert sequencer.on_state(expired, 0.1) is None
+    assert sequencer.on_state(expired, 0.1 + ECHO_TIMEOUT_S + 0.01) is None  # not echoed
+    assert sequencer.on_timer(1.0) is None  # no State for more than T_LINK
+    assert report(sequencer, frozenset({Code.FAULT_TEST}), now=1.01) == STOP  # the link is back
+    assert sequencer.status is MissionStatus.RUNNING
+
+
+def test_v08_aborts_on_any_other_code():
+    sequencer = Sequencer(build_v08_mission())
+    sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), 0.0, 0.0))
+
+    assert report(sequencer, frozenset({Code.FAULT_DEADLINE_MISSED})) == STOP
+    assert sequencer.status is MissionStatus.ABORTED
+
+
+def test_the_node_parameter_names_v08():
+    assert MISSIONS['v08'] is build_v08_mission
