@@ -14,12 +14,15 @@ command a call returns, and republishes `command` on its timer (ADR 033).
   (ADR 032). Abort ends the mission with TWIST(0, 0); recover runs its steps and then enters the
   current step again, with a new pose; ignore leaves the step running. With several codes
   activated at once, abort comes first, then recover.
+A step whose target is a vertex of the plan has no target without map -> odom: the mission
+aborts, the only reaction to TF_MISSING (ADR 035).
 The mission begins on the first Odometry, since a step needs the pose; a State before it is
 ignored. Domain without ROS (ADR 047).
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -30,6 +33,7 @@ from robot_sequencer.mission import (
     Cleared,
     Code,
     Command,
+    MissingTransformError,
     Mission,
     OdometryReading,
     Recover,
@@ -64,8 +68,12 @@ class RunningStep:
 
 
 class Sequencer:
-    def __init__(self, mission: Mission):
+    def __init__(
+        self, mission: Mission, get_map_to_odom: Callable[[], Pose | None] = lambda: None
+    ):
+        """Run the mission; get_map_to_odom returns the latest pose of odom in map, if any."""
         self._mission = mission
+        self._get_map_to_odom = get_map_to_odom
         self._status = MissionStatus.WAITING
         self._running: RunningStep | None = None
         self._recovery: list[Step] = []  # steps of a recover still to run
@@ -126,7 +134,10 @@ class Sequencer:
             return self._finish(MissionStatus.SUCCEEDED)
         else:
             step, is_recovery = self._mission.steps[index], False
-        command = step.behavior.resolve(self._pose)
+        try:
+            command = step.behavior.resolve(self._pose, self._get_map_to_odom())
+        except MissingTransformError:
+            return self._finish(MissionStatus.ABORTED)  # the only reaction to TF_MISSING
         self._running = RunningStep(index, step, self._pose, command, is_recovery)
         self._seen_codes = frozenset()
         self._status = MissionStatus.RUNNING

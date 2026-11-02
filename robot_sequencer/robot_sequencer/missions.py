@@ -19,16 +19,28 @@ S4 is the TWIST(0, 0) the sequencer sends at the end or the abort of a mission.
 V-07, repetition rule: TWIST(v_r, 0) -> activation of the test code -> TWIST(0, 0) -> its
 deactivation -> TWIST(v_r, 0). The controller activates FAULT_TEST every T_ev and clears it when
 the TWIST(0, 0) arrives (ADR 049); any other code aborts, the default.
+
+Mission by plan (V-04): one pair TURN_TO(heading to the vertex) -> GO_TO(vertex) per segment of
+the plan (ADRs 015, 024 and 034), the vertices in map (ADR 035). Table of ADR 038, with abort
+where its ladder is not implemented (a debt of V-09):
+
+| Code | TURN_TO | GO_TO |
+| Front obstacle, front sensor fault | ignore | abort (ADR 038: ladder of wait_until_clear) |
+| Deadline missed | ignore | ignore |
+| Any other code | abort | abort |
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import math
 
+from robot_sequencer.geometry import Point
 from robot_sequencer.mission import (
     Code,
     DistanceFromStart,
     GoTo,
     HeadingTo,
+    Ignore,
+    MapPoint,
     Mission,
     Never,
     Offset,
@@ -66,6 +78,23 @@ def build_v07_mission() -> Mission:
         steps=[Step(Twist(V_R, 0.0), until=Never())],
         reactions={Code.FAULT_TEST: Recover([wait_until_clear(Code.FAULT_TEST)])},
     )
+
+
+# The front reflex and the fault of its sensor allow a turn in place (ADR 021).
+TURN_IN_PLACE_REACTIONS = {
+    Code.REFLEX_FRONT_OBSTACLE: Ignore(),
+    Code.FAULT_FRONT_SENSOR: Ignore(),
+}
+
+
+def build_plan_mission(vertices: Sequence[Point]) -> Mission:
+    """Return the mission of a plan, from its vertices in map (plan.py)."""
+    steps: list[Step] = []
+    for vertex in vertices:
+        target = MapPoint(vertex)
+        steps.append(Step(TurnTo(HeadingTo(target)), reactions=TURN_IN_PLACE_REACTIONS))
+        steps.append(Step(GoTo(target)))
+    return Mission(steps, reactions={Code.FAULT_DEADLINE_MISSED: Ignore()})
 
 
 MISSIONS: dict[str, Callable[[], Mission]] = {

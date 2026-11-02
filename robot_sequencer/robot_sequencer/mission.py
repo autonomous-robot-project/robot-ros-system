@@ -4,7 +4,8 @@ Vocabulary of the missions: steps of primitive behaviors, their targets and term
 Criticality: T2, product (robot-docs codigo.md).
 
 A mission is data (ADR 032): a list of steps, each with a behavior of ADR 024, parameters computed
-at the entry of the step from the current pose, and a termination tested on the message that
+at the entry of the step from the current pose (and the latest map -> odom for a vertex of the
+plan, ADR 035), and a termination tested on the message that
 changes its input: the pose on each Odometry, a code on each State (ADR 033). The reaction to the
 activation of a code comes from the table of the step, else of the mission, else abort.
 Domain without ROS (ADR 047): the node converts the messages to these types.
@@ -63,7 +64,7 @@ class OdometryReading:
 
 
 class Code(Enum):
-    """Condition reported by the controller, one bit of a mask of the State (ADR 025)."""
+    """Condition that gets a reaction: a bit of the State (ADR 025) or an event (ADR 037)."""
 
     FAULT_COGNIZANT = auto()
     FAULT_DEADLINE_MISSED = auto()
@@ -72,6 +73,12 @@ class Code(Enum):
     FAULT_TEST = auto()
     REFLEX_FRONT_OBSTACLE = auto()
     UNKNOWN = auto()  # a bit the sequencer does not know yet: the default reaction still applies
+    # Events of the sequencer.
+    TF_MISSING = auto()  # no map -> odom at the entry of a step with a MapPoint (ADR 035)
+
+
+# Codes of a failure that leaves the step without a target: their only reaction is abort.
+ABORT_ONLY_CODES: frozenset[Code] = frozenset({Code.TF_MISSING})
 
 
 @dataclass(frozen=True)
@@ -94,6 +101,17 @@ class Recover:
 Reaction = Abort | Ignore | Recover
 
 
+def check_abort_only(reactions: Mapping[Code, Reaction]) -> None:
+    """Raise if a table gives a code of ABORT_ONLY_CODES a reaction other than abort."""
+    for code in ABORT_ONLY_CODES & reactions.keys():
+        if not isinstance(reactions[code], Abort):
+            raise ValueError(f'{code.name} has no target to go on with: its reaction is abort')
+
+
+class MissingTransformError(Exception):
+    """The map -> odom transform is not available at the entry of the step (ADR 035)."""
+
+
 class Offset:
     """
     Point at a distance along the heading turned from the pose where it is first resolved.
@@ -107,7 +125,7 @@ class Offset:
         self._distance = distance  # m
         self._point: Point | None = None
 
-    def resolve_point(self, pose: Pose) -> Point:
+    def resolve_point(self, pose: Pose, map_to_odom: Pose | None = None) -> Point:
         if self._point is None:
             heading = pose.theta + self._turn
             self._point = Point(
@@ -118,13 +136,32 @@ class Offset:
 
 
 @dataclass(frozen=True)
+class MapPoint:
+    """
+    Vertex of the plan in map, converted to odom at the entry of each step that uses it (ADR 035).
+
+    The conversion uses the latest map -> odom, and the target stays fixed during the step.
+    """
+
+    point: Point  # m, in map
+
+    def resolve_point(self, pose: Pose, map_to_odom: Pose | None = None) -> Point:
+        if map_to_odom is None:
+            raise MissingTransformError
+        return map_to_odom.convert_to_local(self.point)
+
+
+Target = Offset | MapPoint
+
+
+@dataclass(frozen=True)
 class HeadingTo:
     """Heading from the current pose to a point target."""
 
-    target: Offset
+    target: Target
 
-    def resolve_heading(self, pose: Pose) -> float:
-        return pose.position.direction_to(self.target.resolve_point(pose))
+    def resolve_heading(self, pose: Pose, map_to_odom: Pose | None = None) -> float:
+        return pose.position.direction_to(self.target.resolve_point(pose, map_to_odom))
 
 
 @dataclass(frozen=True)
@@ -181,7 +218,7 @@ class Twist:
 
     default_termination = None  # a TWIST step names its termination
 
-    def resolve(self, pose: Pose) -> Command:
+    def resolve(self, pose: Pose, map_to_odom: Pose | None = None) -> Command:
         return Command(Behavior.TWIST, linear=self.linear, angular=self.angular)
 
 
@@ -191,18 +228,19 @@ class TurnTo:
 
     default_termination = HeadingReached()
 
-    def resolve(self, pose: Pose) -> Command:
-        return Command(Behavior.TURN_TO, theta=wrap_angle(self.heading.resolve_heading(pose)))
+    def resolve(self, pose: Pose, map_to_odom: Pose | None = None) -> Command:
+        heading = self.heading.resolve_heading(pose, map_to_odom)
+        return Command(Behavior.TURN_TO, theta=wrap_angle(heading))
 
 
 @dataclass(frozen=True)
 class GoTo:
-    target: Offset
+    target: Target
 
     default_termination = PositionReached()
 
-    def resolve(self, pose: Pose) -> Command:
-        point = self.target.resolve_point(pose)
+    def resolve(self, pose: Pose, map_to_odom: Pose | None = None) -> Command:
+        point = self.target.resolve_point(pose, map_to_odom)
         return Command(Behavior.GO_TO, x=point.x, y=point.y)
 
 
@@ -218,6 +256,7 @@ class Step:
     def __post_init__(self) -> None:
         if self.until is None and self.behavior.default_termination is None:
             raise ValueError(f'{self.behavior} has no default termination: name it with until')
+        check_abort_only(self.reactions)
 
     @property
     def termination(self) -> Termination:
@@ -236,6 +275,9 @@ def wait_until_clear(code: Code) -> Step:
 class Mission:
     steps: Sequence[Step]
     reactions: Mapping[Code, Reaction] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        check_abort_only(self.reactions)
 
     def get_reaction(self, step: Step, code: Code) -> Reaction:
         """Return the reaction of the step to the code, else of the mission, else abort."""

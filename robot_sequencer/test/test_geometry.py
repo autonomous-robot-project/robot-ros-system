@@ -1,7 +1,7 @@
 import math
 
 import pytest
-from robot_sequencer.geometry import Point, wrap_angle
+from robot_sequencer.geometry import Point, Pose, wrap_angle
 
 
 @pytest.mark.parametrize(
@@ -35,3 +35,15 @@ def test_distance_to_is_the_euclidean_distance():
 )
 def test_direction_to_is_the_heading_of_the_line_to_the_target(target, direction):
     assert Point(0.0, 0.0).direction_to(target) == pytest.approx(direction)
+
+
+def test_pose_of_odom_in_map_converts_a_vertex_in_map_to_odom():
+    # odom is 1 m along x of map, turned +90 deg: its x axis is y of map, so map (1, 1) is
+    # odom (1, 0).
+    odom_in_map = Pose(Point(1.0, 0.0), math.pi / 2)
+    vertex = odom_in_map.convert_to_local(Point(1.0, 1.0))
+    assert (vertex.x, vertex.y) == pytest.approx((1.0, 0.0))
+
+
+def test_identity_pose_keeps_the_point():
+    assert Pose(Point(0.0, 0.0), 0.0).convert_to_local(Point(2.0, 2.0)) == Point(2.0, 2.0)
