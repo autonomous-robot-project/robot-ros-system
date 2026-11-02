@@ -19,10 +19,9 @@ vertices of the Path become the mission. The map -> odom comes from a tf2 buffer
 looked up with timeout zero at the entry of each step (ADR 035).
 
 With `mission:='v08'`, the load of C1 of V-08 (F8 D2): plans from p₀ to p_g of V-04, asked
-asynchronously again at each answer, so the planner is always busy while the sequencer reacts to
-the events; each plan is discarded, and the planner_server publishes it on `plan`. After an error
-or with no planner_server (C2), the next request waits for the timer, so the sequencer at FIFO 50
-never loops on failures; the errors are counted, not a reason to abort.
+asynchronously every T_plan while the sequencer reacts to the events; each plan is discarded, and
+the planner_server publishes it on `plan`. The errors, and the missing planner_server of C2, are
+counted, not a reason to abort.
 
 Usage: chrt -f 50 <prefix>/lib/robot_sequencer/sequencer --ros-args -p "mission:='v01'"
 (quoted, so an empty mission is read as text),
@@ -70,6 +69,11 @@ GOAL_QUEUE_DEPTH = 10  # the default QoS of RViz and of run_v04: reliable
 MISSION_WITH_PLANNING_LOAD = 'v08'  # C1 of V-08 (F8 D2)
 LOAD_START = (0.0, 0.0)  # m in map, p₀ of V-04
 LOAD_GOAL = (2.0, 2.0)  # m in map, p_g of V-04
+# T_plan: the replanning rate of the default behavior tree of Nav2 (RateController at 1 Hz in
+# navigate_to_pose_w_replanning_and_recovery.xml, Jazzy), above the operation of this robot, which
+# plans only for a goal. A request at each answer (about 42 per s, 23 ms of CPU each) kept the
+# sequencer at 98 % of a core and Δ up to 111 ms (robot-docs nota 0019).
+LOAD_PERIOD_S: float = 1.0
 LOAD_LOG_PERIOD_S: float = 10.0
 
 # QoS of every topic of the link (ADR 025), the same as robot_verification/link.py.
@@ -233,7 +237,7 @@ class PlanClient:
 
 
 class PlanningLoad:
-    """The planner always busy from p₀ to p_g of V-04, each plan discarded (C1 of V-08, F8 D2)."""
+    """Plans from p₀ to p_g of V-04 every T_plan, each discarded (C1 of V-08, F8 D2)."""
 
     def __init__(self, node: Node):
         self._logger = node.get_logger()
@@ -243,20 +247,18 @@ class PlanningLoad:
         self._is_waiting = False  # for the answer to a request
         self._paths = 0
         self._failures = 0
+        node.create_timer(LOAD_PERIOD_S, self._request_if_answered)
 
-    def keep_busy(self) -> None:
-        """Ask again after an error or with no planner_server; called by the timer."""
+    def _request_if_answered(self) -> None:
+        # A plan slower than T_plan is not cancelled by the next request.
         if not self._is_waiting:
-            self._request()
-
-    def _request(self) -> None:
-        self._is_waiting = True
-        self._plans.request(self._goal, self._start)
+            self._is_waiting = True
+            self._plans.request(self._goal, self._start)
 
     def _on_path(self, path: Path, goal: PoseStamped) -> None:
         self._paths += 1
+        self._is_waiting = False
         self._log_count()
-        self._request()
 
     def _on_failure(self, reason: str) -> None:
         self._failures += 1
@@ -287,7 +289,8 @@ class SequencerNode(Node):
         self.create_subscription(Empty, HEARTBEAT_TOPIC, self._on_heartbeat, LINK_QOS)
         self._steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(COMMAND_PERIOD_S, self._on_timer)
-        self._load = PlanningLoad(self) if mission_name == MISSION_WITH_PLANNING_LOAD else None
+        if mission_name == MISSION_WITH_PLANNING_LOAD:
+            self._load = PlanningLoad(self)
         if mission is None:
             self._plans = PlanClient(self, self._on_path, self._on_plan_failure)
             self.create_subscription(PoseStamped, GOAL_TOPIC, self._on_goal, GOAL_QUEUE_DEPTH)
@@ -332,11 +335,9 @@ class SequencerNode(Node):
         self._sequencer.on_heartbeat(self._get_now_s())
 
     def _on_timer(self) -> None:
-        """Publish the command in force, the new one if an age activated a code; keep the load."""
+        """Publish the command in force, the new one if an age activated a code."""
         self._log_if_new(self._sequencer.on_timer(self._get_now_s()))
         self._commands.publish(build_command_message(self._sequencer.command))
-        if self._load is not None:
-            self._load.keep_busy()
 
     def _publish_if_new(self, command: Command | None) -> None:
         if command is None:
