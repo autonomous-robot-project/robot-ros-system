@@ -1,5 +1,5 @@
 # SLAM as computational load of V-08 C1: slam_toolbox processes /scan, but nobody consumes its
-# map and it publishes no transform; the planner keeps planning over M (ADR 040, F8 D1).
+# map and it publishes no transform; the planner keeps planning over M (ADR 040).
 # The launch loads the package defaults, then slam.yaml, then this file: the last one wins.
 # Criticality: T2, product (robot-docs codigo.md).
 

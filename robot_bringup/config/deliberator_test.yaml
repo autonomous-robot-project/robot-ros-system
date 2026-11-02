@@ -1,5 +1,5 @@
 # Deliberator in the test configuration (V-04, V-08 C1): the planner plans over the map M,
-# with a costmap of the static and inflation layers only (robot-docs arquitetura.md, F7 D1).
+# with a costmap of the static and inflation layers only (robot-docs arquitetura.md, test configuration).
 # The map_server file is set by the launch. Listed: the parameters that differ from the Nav2
 # defaults and those that record a decision; the others keep the Nav2 defaults.
 # Criticality: T2, product (robot-docs codigo.md).
@@ -20,7 +20,7 @@ global_costmap:
       # Forbidden zone = r + m + res = 0.131 + 0.10 + 0.05 m (ADR 042; r measured, nota 0003)
       robot_radius: 0.281
       track_unknown_space: true  # keeps unknown cells unknown, for allow_unknown
-      plugins: ["static_layer", "inflation_layer"]  # no obstacle layer in tests (F7 D1)
+      plugins: ["static_layer", "inflation_layer"]  # no obstacle layer in tests (robot-docs arquitetura.md)
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
       inflation_layer:

@@ -2,8 +2,9 @@
 
 Includes deliberator_test.launch.py unchanged: the planner keeps planning over M, with map -> odom
 the static identity (ADR 035). Adds the LiDAR (lidar.launch.py) and slam_toolbox, which processes
-/scan into its own frame and topic, consumed by nobody, and publishes no transform (ADR 040,
-F8 D1). The costmap has no obstacle layer, so /scan is only load (F7 D1).
+/scan into its own frame and topic, consumed by nobody, and publishes no transform (ADR 040).
+The costmap has no obstacle layer, so /scan is only load (test configuration, robot-docs
+arquitetura.md).
 
 Usage: ros2 launch robot_bringup deliberator_c1.launch.py
 

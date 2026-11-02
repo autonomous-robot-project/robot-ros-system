@@ -3,7 +3,7 @@
 The micro-ROS agent and the sequencer run in SCHED_FIFO 50 (ADR 039); the sequencer waits for
 /goal_pose (mission by plan). slam_toolbox maps continuously and publishes /map and map -> odom;
 the planner plans over that map, with the obstacle layer over /scan (ADRs 040 and 041). Not used
-by the verifications, which use the test configuration (F7 D1); it is the source of the rqt_graph
+by the verifications, which use the test configuration (robot-docs arquitetura.md); it is the source of the rqt_graph
 of V-09.
 
 Usage: ros2 launch robot_bringup robot.launch.py

@@ -12,7 +12,7 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 
 LASER_FRAME = 'laser'
-# Pose of the LD19 optical centre in base_link: a medir (F8 I0, #25), with a ruler from the
+# Pose of the LD19 optical centre in base_link: a medir (robot-docs#25), with a ruler from the
 # centre of the wheel axle. It does not change the load of C1.
 LASER_X = 0.0  # m, x_l
 LASER_Y = 0.0  # m, y_l
