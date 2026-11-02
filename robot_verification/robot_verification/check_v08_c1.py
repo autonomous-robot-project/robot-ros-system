@@ -40,10 +40,10 @@ if TYPE_CHECKING:
     from nav_msgs.msg import Path
     from robot_interfaces.msg import Instrumentation
 
-# Longest time without a new plan. To be measured: the duration of ComputePathToPose in the bag of
-# V-04, from each request to its Path. Until then NaN, so no comparison passes and C1 is never
-# established by mistake.
-T_GAP_S: float = math.nan
+# Longest time without a new plan. In the dry C1 run of robot-docs nota 0019 the plans came every
+# 22.6 ms (median), at most 132 ms apart, and the first 0.42 s after the start of the recording:
+# T_gap covers that start and is 3.8 times the longest gap.
+T_GAP_S: float = 0.5
 
 
 class PlanDeliveryRun:

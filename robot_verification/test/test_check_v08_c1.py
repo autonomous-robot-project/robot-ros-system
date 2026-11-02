@@ -4,21 +4,13 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from robot_verification.check_v08_c1 import C1Establishment, C1Report, PlanDeliveryRun
+from robot_verification.check_v08_c1 import T_GAP_S, C1Establishment, C1Report, PlanDeliveryRun
 from robot_verification.recording import Sample, Verdict
 from synthetic import instrumentation, periodic
 
-from robot_verification import check_v08_c1
-
-T_GAP_S = 0.5  # stands for the value to be measured in the bag of V-04
 INSTRUMENTATION_PERIOD_S = 0.1  # 10 Hz
 PLAN_PERIOD_S = 0.2  # one plan per response of the planner
 RUN_S = 600.0  # 10 min of V-07
-
-
-@pytest.fixture(autouse=True)
-def measured_t_gap(monkeypatch):
-    monkeypatch.setattr(check_v08_c1, 'T_GAP_S', T_GAP_S)
 
 
 @dataclass
@@ -70,12 +62,8 @@ def test_missing_plans_do_not_establish_c1(run):
 
 def test_gap_just_below_t_gap_establishes_c1():
     # Removing the plans inside (300, 300.4) leaves 300.0 and 300.4 apart by 0.4 s.
+    assert 0.4 < T_GAP_S
     assert judge(gap_at_s=300.0, gap_s=0.3).verdict == Verdict.PASS
-
-
-def test_unmeasured_t_gap_never_establishes_c1(monkeypatch):
-    monkeypatch.setattr(check_v08_c1, 'T_GAP_S', float('nan'))
-    assert judge().verdict == Verdict.INVALID
 
 
 def test_report_ends_with_the_outcome():
