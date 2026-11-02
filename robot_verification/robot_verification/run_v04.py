@@ -194,7 +194,8 @@ def main() -> None:
             time.sleep(SESSION_UP_S)
             V04Procedure(trial).run()
     finally:
-        rclpy.shutdown()
+        # The SIGINT handler of rclpy may have shut the context down already.
+        rclpy.try_shutdown()
     announce(f'done: check_v04 {sys.argv[1]}')
 
 
