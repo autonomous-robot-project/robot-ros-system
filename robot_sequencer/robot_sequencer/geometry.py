@@ -20,8 +20,8 @@ def wrap_angle(angle: float) -> float:
 
 @dataclass(frozen=True)
 class Point:
-    x: float  # m, in odom
-    y: float  # m, in odom
+    x: float  # m, in odom (in map for a vertex of the plan)
+    y: float  # m, in odom (in map for a vertex of the plan)
 
     def distance_to(self, other: Point) -> float:
         return math.hypot(other.x - self.x, other.y - self.y)
