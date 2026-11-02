@@ -72,7 +72,10 @@ class SequencerProcess:
         executable = os.path.join(
             get_package_prefix('robot_sequencer'), 'lib', 'robot_sequencer', 'sequencer'
         )
-        self._command = [*REALTIME_PREFIX, executable, '--ros-args', '-p', f'mission:={mission}']
+        # Quoted, so the YAML of the override reads the empty mission by plan (V-04) as text:
+        # `mission:=` alone stops rcl at init.
+        mission_override = f"mission:='{mission}'"
+        self._command = [*REALTIME_PREFIX, executable, '--ros-args', '-p', mission_override]
         self._log_path = log_path
         self._process = None
 
