@@ -77,6 +77,14 @@ def test_a_code_activated_in_the_first_step_aborts(sequencer):
     assert sequencer.command == STOP
 
 
+def test_the_codes_behind_an_abort_are_given_once(sequencer):
+    sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))
+    report(sequencer, FAULT)
+
+    assert sequencer.pop_reaction_codes() == FAULT
+    assert sequencer.pop_reaction_codes() == NO_CODES
+
+
 def test_a_reflex_activated_also_aborts(sequencer):
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))
 

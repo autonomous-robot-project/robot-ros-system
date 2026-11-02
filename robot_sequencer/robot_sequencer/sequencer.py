@@ -62,7 +62,7 @@ from robot_sequencer.mission import (
 COMMAND_EXPIRY_S: float = 0.2  # T_cmd: the controller expires a command after it (RNF-02)
 LINK_TIMEOUT_S: float = COMMAND_EXPIRY_S  # T_LINK = T_cmd: the controller has stopped by then
 # T_cmd + 2 periods of republication; 34 times the worst latency command -> echo, 8.8 ms
-# (robot-docs nota 0006, F7 D3).
+# (robot-docs nota 0006).
 ECHO_TIMEOUT_S: float = 0.3  # T_eco
 HEARTBEAT_TIMEOUT_S: float = 0.5  # T_HB
 
@@ -120,6 +120,7 @@ class Sequencer:
         self._last_state_s: float | None = None
         self._last_heartbeat_s: float | None = None
         self._echo_differs_since_s: float | None = None
+        self._reaction_codes: frozenset[Code] = frozenset()  # behind the latest reaction
 
     @property
     def status(self) -> MissionStatus:
@@ -153,6 +154,11 @@ class Sequencer:
         self._controller_codes = state.codes
         self._track_echo(state.echo, now)
         return self._update_codes(now)
+
+    def pop_reaction_codes(self) -> frozenset[Code]:
+        """Return the codes behind the latest abort or recover, once, for the log (#51)."""
+        codes, self._reaction_codes = self._reaction_codes, frozenset()
+        return codes
 
     def wait_for_plan(self) -> Command:
         """Preempt the mission for a new goal: TWIST(0, 0) until its plan arrives."""
@@ -211,11 +217,18 @@ class Sequencer:
             self._echo_differs_since_s = now
 
     def _react_to(self, running: RunningStep, activated: frozenset[Code]) -> Command | None:
-        reactions = [self._mission.get_reaction(running.step, code) for code in activated]
-        if any(isinstance(reaction, Abort) for reaction in reactions):
+        reactions = {code: self._mission.get_reaction(running.step, code) for code in activated}
+        aborts = frozenset(
+            code for code, reaction in reactions.items() if isinstance(reaction, Abort)
+        )
+        if aborts:
+            self._reaction_codes = aborts
             return self._finish(MissionStatus.ABORTED)
-        recovers = [reaction for reaction in reactions if isinstance(reaction, Recover)]
+        recovers = [reaction for reaction in reactions.values() if isinstance(reaction, Recover)]
         if recovers:
+            self._reaction_codes = frozenset(
+                code for code, reaction in reactions.items() if isinstance(reaction, Recover)
+            )
             self._recovery = list(recovers[0].steps)
             return self._enter_step(running.index)
         return None

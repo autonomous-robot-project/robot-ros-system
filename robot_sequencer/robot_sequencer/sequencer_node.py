@@ -18,7 +18,7 @@ the answer to the latest goal counts, and a new goal cancels the pending one (AD
 vertices of the Path become the mission. The map -> odom comes from a tf2 buffer in this executor,
 looked up with timeout zero at the entry of each step (ADR 035).
 
-With `mission:='v08'`, the load of C1 of V-08 (F8 D2): plans from p₀ to p_g of V-04, asked
+With `mission:='v08'`, the load of C1 of V-08 (nota 0019): plans from p₀ to p_g of V-04, asked
 asynchronously every T_plan while the sequencer reacts to the events; each plan is discarded, and
 the planner_server publishes it on `plan`. The errors, and the missing planner_server of C2, are
 counted, not a reason to abort.
@@ -66,7 +66,7 @@ MAP_FRAME = 'map'
 ODOM_FRAME = 'odom'
 MISSION_BY_PLAN = ''  # the empty `mission` waits for /goal_pose
 GOAL_QUEUE_DEPTH = 10  # the default QoS of RViz and of run_v04: reliable
-MISSION_WITH_PLANNING_LOAD = 'v08'  # C1 of V-08 (F8 D2)
+MISSION_WITH_PLANNING_LOAD = 'v08'  # C1 of V-08 (robot-docs nota 0019)
 LOAD_START = (0.0, 0.0)  # m in map, p₀ of V-04
 LOAD_GOAL = (2.0, 2.0)  # m in map, p_g of V-04
 # T_plan: the replanning rate of the default behavior tree of Nav2 (RateController at 1 Hz in
@@ -237,7 +237,7 @@ class PlanClient:
 
 
 class PlanningLoad:
-    """Plans from p₀ to p_g of V-04 every T_plan, each discarded (C1 of V-08, F8 D2)."""
+    """Plans from p₀ to p_g of V-04 every T_plan, each discarded (C1 of V-08, nota 0019)."""
 
     def __init__(self, node: Node):
         self._logger = node.get_logger()
@@ -346,8 +346,11 @@ class SequencerNode(Node):
         self._log_if_new(command)
 
     def _log_if_new(self, command: Command | None) -> None:
-        if command is not None:
-            self.get_logger().info(f'{self._sequencer.status.name}: {command}')
+        if command is None:
+            return
+        codes = self._sequencer.pop_reaction_codes()
+        cause = f' on {", ".join(sorted(code.name for code in codes))}' if codes else ''
+        self.get_logger().info(f'{self._sequencer.status.name}: {command}{cause}')
 
     def _get_now_s(self) -> float:
         return self._steady_clock.now().nanoseconds / NS_PER_S
