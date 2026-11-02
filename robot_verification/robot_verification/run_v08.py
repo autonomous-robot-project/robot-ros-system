@@ -156,9 +156,9 @@ class V08Procedure:
         topics = CONTROLLER_TOPICS + ([PLAN_TOPIC] if self._condition is Condition.C1 else [])
         stats_path = get_beside_bag(self._bag_path, PROCESS_STATS_SUFFIX)
         with BagRecorder(self._bag_path, topics), LoggedProcess(PROCESS_STATS, stats_path):
-            announce(f'recording {RUN_S / 60:.0f} min: ground GPIO 12 of the ESP32 now')
+            announce(f'recording {RUN_S / 60:.0f} min: ground GPIO 7 of the ESP32 now (ADR 049)')
             wait_with_progress(RUN_S)
-            announce('release GPIO 12 now')
+            announce('release GPIO 7 now')
 
 
 def get_beside_bag(bag_path: str, suffix: str) -> str:
