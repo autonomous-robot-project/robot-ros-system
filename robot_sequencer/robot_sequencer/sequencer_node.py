@@ -18,6 +18,12 @@ the answer to the latest goal counts, and a new goal cancels the pending one (AD
 vertices of the Path become the mission. The map -> odom comes from a tf2 buffer in this executor,
 looked up with timeout zero at the entry of each step (ADR 035).
 
+With `mission:='v08'`, the load of C1 of V-08 (F8 D2): plans from p₀ to p_g of V-04, asked
+asynchronously again at each answer, so the planner is always busy while the sequencer reacts to
+the events; each plan is discarded, and the planner_server publishes it on `plan`. After an error
+or with no planner_server (C2), the next request waits for the timer, so the sequencer at FIFO 50
+never loops on failures; the errors are counted, not a reason to abort.
+
 Usage: chrt -f 50 <prefix>/lib/robot_sequencer/sequencer --ros-args -p "mission:='v01'"
 (quoted, so an empty mission is read as text),
 (the executable itself, not `ros2 run`, which does not forward SIGTERM; priority of ADR 039).
@@ -61,6 +67,10 @@ MAP_FRAME = 'map'
 ODOM_FRAME = 'odom'
 MISSION_BY_PLAN = ''  # the empty `mission` waits for /goal_pose
 GOAL_QUEUE_DEPTH = 10  # the default QoS of RViz and of run_v04: reliable
+MISSION_WITH_PLANNING_LOAD = 'v08'  # C1 of V-08 (F8 D2)
+LOAD_START = (0.0, 0.0)  # m in map, p₀ of V-04
+LOAD_GOAL = (2.0, 2.0)  # m in map, p_g of V-04
+LOAD_LOG_PERIOD_S: float = 10.0
 
 # QoS of every topic of the link (ADR 025), the same as robot_verification/link.py.
 LINK_QOS = QoSProfile(
@@ -142,6 +152,14 @@ def build_command_message(command: Command) -> CommandMessage:
     )
 
 
+def build_map_pose(x: float, y: float) -> PoseStamped:
+    pose = PoseStamped()
+    pose.header.frame_id = MAP_FRAME
+    pose.pose.position.x = x
+    pose.pose.position.y = y
+    return pose
+
+
 def get_vertices(path: Path, goal: PoseStamped) -> list[Point]:
     points = [get_point(stamped.pose.position) for stamped in path.poses]
     return extract_vertices(points, get_point(goal.pose.position))
@@ -167,7 +185,8 @@ class PlanClient:
         self._request = 0  # number of the latest goal
         self._pending: ClientGoalHandle | None = None
 
-    def request(self, goal: PoseStamped) -> None:
+    def request(self, goal: PoseStamped, start: PoseStamped | None = None) -> None:
+        """Ask for a plan to the goal, from the start if given, else from the pose of the robot."""
         self._cancel_pending()
         self._request += 1
         if goal.header.frame_id != MAP_FRAME:
@@ -176,7 +195,10 @@ class PlanClient:
             self._on_failure('no planner_server')
         else:
             request = self._request
-            future = self._client.send_goal_async(ComputePathToPose.Goal(goal=goal))
+            action_goal = ComputePathToPose.Goal(goal=goal)
+            if start is not None:
+                action_goal.start, action_goal.use_start = start, True
+            future = self._client.send_goal_async(action_goal)
             future.add_done_callback(lambda done: self._on_accepted(done.result(), request, goal))
 
     def _on_accepted(self, handle: ClientGoalHandle, request: int, goal: PoseStamped) -> None:
@@ -210,6 +232,44 @@ class PlanClient:
             self._pending = None
 
 
+class PlanningLoad:
+    """The planner always busy from p₀ to p_g of V-04, each plan discarded (C1 of V-08, F8 D2)."""
+
+    def __init__(self, node: Node):
+        self._logger = node.get_logger()
+        self._plans = PlanClient(node, self._on_path, self._on_failure)
+        self._start = build_map_pose(*LOAD_START)
+        self._goal = build_map_pose(*LOAD_GOAL)
+        self._is_waiting = False  # for the answer to a request
+        self._paths = 0
+        self._failures = 0
+
+    def keep_busy(self) -> None:
+        """Ask again after an error or with no planner_server; called by the timer."""
+        if not self._is_waiting:
+            self._request()
+
+    def _request(self) -> None:
+        self._is_waiting = True
+        self._plans.request(self._goal, self._start)
+
+    def _on_path(self, path: Path, goal: PoseStamped) -> None:
+        self._paths += 1
+        self._log_count()
+        self._request()
+
+    def _on_failure(self, reason: str) -> None:
+        self._failures += 1
+        self._is_waiting = False
+        self._log_count(reason)
+
+    def _log_count(self, last_failure: str = '') -> None:
+        self._logger.info(
+            f'planning load: {self._paths} plans, {self._failures} failures {last_failure}',
+            throttle_duration_sec=LOAD_LOG_PERIOD_S,
+        )
+
+
 class SequencerNode(Node):
     def __init__(self):
         super().__init__('sequencer')
@@ -227,6 +287,7 @@ class SequencerNode(Node):
         self.create_subscription(Empty, HEARTBEAT_TOPIC, self._on_heartbeat, LINK_QOS)
         self._steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(COMMAND_PERIOD_S, self._on_timer)
+        self._load = PlanningLoad(self) if mission_name == MISSION_WITH_PLANNING_LOAD else None
         if mission is None:
             self._plans = PlanClient(self, self._on_path, self._on_plan_failure)
             self.create_subscription(PoseStamped, GOAL_TOPIC, self._on_goal, GOAL_QUEUE_DEPTH)
@@ -271,9 +332,11 @@ class SequencerNode(Node):
         self._sequencer.on_heartbeat(self._get_now_s())
 
     def _on_timer(self) -> None:
-        """Publish the command in force, the new one if an age activated a code."""
+        """Publish the command in force, the new one if an age activated a code; keep the load."""
         self._log_if_new(self._sequencer.on_timer(self._get_now_s()))
         self._commands.publish(build_command_message(self._sequencer.command))
+        if self._load is not None:
+            self._load.keep_busy()
 
     def _publish_if_new(self, command: Command | None) -> None:
         if command is None:
