@@ -172,7 +172,7 @@ def main() -> None:
             time.sleep(SESSION_UP_S)
             V01Procedure(run_directory).run()
     finally:
-        rclpy.shutdown()
+        rclpy.try_shutdown()  # SIGINT: the handler of rclpy may have shut down already
     announce(f'done: check_v01 {run_directory}')
 
 

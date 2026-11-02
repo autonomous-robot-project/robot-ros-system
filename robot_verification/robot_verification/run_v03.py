@@ -124,7 +124,7 @@ def main() -> None:
             time.sleep(SESSION_UP_S)
             V03Procedure(trial).run()
     finally:
-        rclpy.shutdown()
+        rclpy.try_shutdown()  # SIGINT: the handler of rclpy may have shut down already
     announce(f'done: check_v03 {sys.argv[1]}')
 
 

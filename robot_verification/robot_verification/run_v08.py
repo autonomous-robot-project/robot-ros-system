@@ -208,7 +208,7 @@ def main() -> None:
     try:
         V08Procedure(condition, bag_path).run()
     finally:
-        rclpy.shutdown()
+        rclpy.try_shutdown()  # SIGINT: the handler of rclpy may have shut down already
     checks = f'check_v05 {bag_path}, check_v07 {bag_path}'
     if condition is Condition.C1:
         checks += f', check_v08_c1 {bag_path}'
