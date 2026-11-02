@@ -32,6 +32,7 @@ setup(
             'check_v05 = robot_verification.check_v05:main',
             'check_v01 = robot_verification.check_v01:main',
             'check_v07 = robot_verification.check_v07:main',
+            'check_v08_c1 = robot_verification.check_v08_c1:main',
             'run_v02 = robot_verification.run_v02:main',
             'run_v03 = robot_verification.run_v03:main',
             'run_v01 = robot_verification.run_v01:main',
