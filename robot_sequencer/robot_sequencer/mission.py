@@ -13,7 +13,7 @@ Domain without ROS (ADR 047): the node converts the messages to these types.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 import math
@@ -105,6 +105,7 @@ class Code(Enum):
     UNKNOWN = auto()  # a bit the sequencer does not know yet: the default reaction still applies
     # Events of the sequencer.
     TF_MISSING = auto()  # no map -> odom at the entry of a step with a MapPoint (ADR 035)
+    PLAN_FAILED = auto()  # planner error, empty path or no planner_server (ADR 034)
     NO_PROGRESS = auto()  # at rest out of tolerance, after moving in the step (ADR 036)
     COMMAND_NOT_ECHOED = auto()  # the echo differs from the command for more than T_eco (ADR 037)
     LINK_LOST = auto()  # no State for more than T_LINK (ADR 037)
@@ -118,7 +119,7 @@ class StateReading:
 
 
 # Codes of a failure that leaves the step without a target: their only reaction is abort.
-ABORT_ONLY_CODES: frozenset[Code] = frozenset({Code.TF_MISSING})
+ABORT_ONLY_CODES: frozenset[Code] = frozenset({Code.TF_MISSING, Code.PLAN_FAILED})
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,15 @@ def check_abort_only(reactions: Mapping[Code, Reaction]) -> None:
             raise ValueError(f'{code.name} has no target to go on with: its reaction is abort')
 
 
+# Returns the latest pose of odom in map, None if the transform is not available; called only by
+# a step whose target is in map, so a mission of a verification never looks it up (ADR 035).
+MapToOdom = Callable[[], Pose | None]
+
+
+def get_no_map_to_odom() -> Pose | None:
+    return None
+
+
 class MissingTransformError(Exception):
     """The map -> odom transform is not available at the entry of the step (ADR 035)."""
 
@@ -165,7 +175,7 @@ class Offset:
         self._distance = distance  # m
         self._point: Point | None = None
 
-    def resolve_point(self, pose: Pose, map_to_odom: Pose | None = None) -> Point:
+    def resolve_point(self, pose: Pose, get_map_to_odom: MapToOdom = get_no_map_to_odom) -> Point:
         if self._point is None:
             heading = pose.theta + self._turn
             self._point = Point(
@@ -185,7 +195,8 @@ class MapPoint:
 
     point: Point  # m, in map
 
-    def resolve_point(self, pose: Pose, map_to_odom: Pose | None = None) -> Point:
+    def resolve_point(self, pose: Pose, get_map_to_odom: MapToOdom = get_no_map_to_odom) -> Point:
+        map_to_odom = get_map_to_odom()
         if map_to_odom is None:
             raise MissingTransformError
         return map_to_odom.convert_to_local(self.point)
@@ -200,8 +211,10 @@ class HeadingTo:
 
     target: Target
 
-    def resolve_heading(self, pose: Pose, map_to_odom: Pose | None = None) -> float:
-        return pose.position.direction_to(self.target.resolve_point(pose, map_to_odom))
+    def resolve_heading(
+        self, pose: Pose, get_map_to_odom: MapToOdom = get_no_map_to_odom
+    ) -> float:
+        return pose.position.direction_to(self.target.resolve_point(pose, get_map_to_odom))
 
 
 @dataclass(frozen=True)
@@ -258,7 +271,7 @@ class Twist:
 
     default_termination = None  # a TWIST step names its termination
 
-    def resolve(self, pose: Pose, map_to_odom: Pose | None = None) -> Command:
+    def resolve(self, pose: Pose, get_map_to_odom: MapToOdom = get_no_map_to_odom) -> Command:
         return Command(Behavior.TWIST, linear=self.linear, angular=self.angular)
 
 
@@ -268,8 +281,8 @@ class TurnTo:
 
     default_termination = HeadingReached()
 
-    def resolve(self, pose: Pose, map_to_odom: Pose | None = None) -> Command:
-        heading = self.heading.resolve_heading(pose, map_to_odom)
+    def resolve(self, pose: Pose, get_map_to_odom: MapToOdom = get_no_map_to_odom) -> Command:
+        heading = self.heading.resolve_heading(pose, get_map_to_odom)
         return Command(Behavior.TURN_TO, theta=wrap_angle(heading))
 
 
@@ -279,8 +292,8 @@ class GoTo:
 
     default_termination = PositionReached()
 
-    def resolve(self, pose: Pose, map_to_odom: Pose | None = None) -> Command:
-        point = self.target.resolve_point(pose, map_to_odom)
+    def resolve(self, pose: Pose, get_map_to_odom: MapToOdom = get_no_map_to_odom) -> Command:
+        point = self.target.resolve_point(pose, get_map_to_odom)
         return Command(Behavior.GO_TO, x=point.x, y=point.y)
 
 

@@ -26,13 +26,15 @@ thread, publishes right away the command a call returns, and republishes `comman
   the codes seen before are forgotten, as at the entry of a step.
 A step whose target is a vertex of the plan has no target without map -> odom: the mission
 aborts, the only reaction to TF_MISSING (ADR 035).
-The mission begins on the first Odometry, since a step needs the pose; a State before it is
-ignored. Domain without ROS (ADR 047).
+A mission of a verification begins on the first Odometry, since a step needs the pose; a State
+before it is ignored. With no mission (the mission by plan), the sequencer is idle until a goal:
+it holds TWIST(0, 0) while the plan is computed, then begins the mission of the plan from the
+latest pose. A new goal preempts the mission. A failed plan has no mission to look a reaction up
+in: PLAN_FAILED aborts, the default (ADR 034). Domain without ROS (ADR 047).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -44,6 +46,7 @@ from robot_sequencer.mission import (
     Code,
     Command,
     HeadingReached,
+    MapToOdom,
     MissingTransformError,
     Mission,
     OdometryReading,
@@ -51,6 +54,7 @@ from robot_sequencer.mission import (
     Recover,
     StateReading,
     Step,
+    get_no_map_to_odom,
     limit_turn,
 )
 
@@ -64,6 +68,8 @@ HEARTBEAT_TIMEOUT_S: float = 0.5  # T_HB
 
 
 class MissionStatus(Enum):
+    IDLE = auto()  # no mission: the mission by plan waits for a goal
+    PLANNING = auto()  # a goal waits for its plan
     WAITING = auto()  # no Odometry yet
     RUNNING = auto()
     SUCCEEDED = auto()
@@ -97,13 +103,15 @@ class RunningStep:
 
 
 class Sequencer:
-    def __init__(
-        self, mission: Mission, get_map_to_odom: Callable[[], Pose | None] = lambda: None
-    ):
-        """Run the mission; get_map_to_odom returns the latest pose of odom in map, if any."""
-        self._mission = mission
+    def __init__(self, mission: Mission | None, get_map_to_odom: MapToOdom = get_no_map_to_odom):
+        """
+        Run the mission, or wait for one with None.
+
+        get_map_to_odom returns the latest pose of odom in map, if any.
+        """
+        self._mission = mission if mission is not None else Mission([])
         self._get_map_to_odom = get_map_to_odom
-        self._status = MissionStatus.WAITING
+        self._status = MissionStatus.IDLE if mission is None else MissionStatus.WAITING
         self._running: RunningStep | None = None
         self._recovery: list[Step] = []  # steps of a recover still to run
         self._seen_codes: frozenset[Code] = frozenset()
@@ -145,6 +153,21 @@ class Sequencer:
         self._controller_codes = state.codes
         self._track_echo(state.echo, now)
         return self._update_codes(now)
+
+    def wait_for_plan(self) -> Command:
+        """Preempt the mission for a new goal: TWIST(0, 0) until its plan arrives."""
+        return self._finish(MissionStatus.PLANNING)
+
+    def start(self, mission: Mission) -> Command | None:
+        """Begin the mission of a plan from the latest pose, else on the first Odometry."""
+        self._mission = mission
+        if self._pose is None:
+            self._status = MissionStatus.WAITING
+            return None
+        return self._enter_step(0)
+
+    def on_plan_failed(self) -> Command:
+        return self._finish(MissionStatus.ABORTED)  # the only reaction to PLAN_FAILED
 
     def on_heartbeat(self, now: float) -> None:
         self._last_heartbeat_s = now
@@ -217,7 +240,7 @@ class Sequencer:
         """Resolve the step from the latest pose and forget the codes seen before (ADR 037)."""
         assert self._pose is not None  # a step only begins after the first Odometry
         try:
-            target_command = step.behavior.resolve(self._pose, self._get_map_to_odom())
+            target_command = step.behavior.resolve(self._pose, self._get_map_to_odom)
         except MissingTransformError:
             return self._finish(MissionStatus.ABORTED)  # the only reaction to TF_MISSING
         command = limit_turn(target_command, self._pose)

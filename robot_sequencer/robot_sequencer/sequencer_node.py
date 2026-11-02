@@ -12,31 +12,55 @@ mission running the command is TWIST(0, 0). The mission comes from the parameter
 (arquitetura.md). The node holds no logic of its own: the domain is in sequencer.py and
 mission.py (ADR 047).
 
-Usage: chrt -f 50 <prefix>/lib/robot_sequencer/sequencer --ros-args -p mission:=v01
+With `mission` empty, the mission by plan (arquitetura.md): a goal on /goal_pose, in map, is sent
+to the planner_server as ComputePathToPose, asynchronously, so nothing blocks the executor; only
+the answer to the latest goal counts, and a new goal cancels the pending one (ADR 034). The
+vertices of the Path become the mission. The map -> odom comes from a tf2 buffer in this executor,
+looked up with timeout zero at the entry of each step (ADR 035).
+
+Usage: chrt -f 50 <prefix>/lib/robot_sequencer/sequencer --ros-args -p "mission:='v01'"
+(quoted, so an empty mission is read as text),
 (the executable itself, not `ros2 run`, which does not forward SIGTERM; priority of ADR 039).
 """
 
+from collections.abc import Callable
 import math
 
-from nav_msgs.msg import Odometry
+from action_msgs.msg import GoalStatus
+from geometry_msgs.msg import Point as PointMessage
+from geometry_msgs.msg import PoseStamped, Quaternion
+from nav2_msgs.action import ComputePathToPose
+from nav_msgs.msg import Odometry, Path
 import rclpy
+from rclpy.action import ActionClient
+from rclpy.action.client import ClientGoalHandle
 from rclpy.clock import Clock, ClockType
+from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.time import Time
 from robot_interfaces.msg import Command as CommandMessage
 from robot_interfaces.msg import State
 from std_msgs.msg import Empty
+from tf2_ros import Buffer, TransformException, TransformListener
 
 from robot_sequencer.geometry import Point, Pose
 from robot_sequencer.mission import Behavior, Code, Command, OdometryReading, StateReading
-from robot_sequencer.missions import MISSIONS
+from robot_sequencer.missions import MISSIONS, build_plan_mission
+from robot_sequencer.plan import extract_vertices
 from robot_sequencer.sequencer import Sequencer
 
 COMMAND_TOPIC = '/controller/command'
 STATE_TOPIC = '/controller/state'
 ODOMETRY_TOPIC = '/controller/odometry'
 HEARTBEAT_TOPIC = '/heartbeat'  # std_msgs/Empty at 10 Hz from the notebook (arquitetura.md)
+GOAL_TOPIC = '/goal_pose'  # geometry_msgs/PoseStamped in map, from RViz or run_v04
+PLANNER_ACTION = 'compute_path_to_pose'  # of the planner_server of Nav2
+MAP_FRAME = 'map'
+ODOM_FRAME = 'odom'
+MISSION_BY_PLAN = ''  # the empty `mission` waits for /goal_pose
+GOAL_QUEUE_DEPTH = 10  # the default QoS of RViz and of run_v04: reliable
 
 # QoS of every topic of the link (ADR 025), the same as robot_verification/link.py.
 LINK_QOS = QoSProfile(
@@ -89,13 +113,19 @@ def get_state_reading(state: State) -> StateReading:
     return StateReading(get_active_codes(state), echo=get_command(state.echo))
 
 
-def get_odometry_reading(odometry: Odometry) -> OdometryReading:
-    position = odometry.pose.pose.position
-    orientation = odometry.pose.pose.orientation
+def get_heading(orientation: Quaternion) -> float:
     # Planar pose: the quaternion is a rotation about z only.
-    theta = 2.0 * math.atan2(orientation.z, orientation.w)
+    return 2.0 * math.atan2(orientation.z, orientation.w)
+
+
+def get_point(position: PointMessage) -> Point:
+    return Point(position.x, position.y)
+
+
+def get_odometry_reading(odometry: Odometry) -> OdometryReading:
+    pose = odometry.pose.pose
     return OdometryReading(
-        Pose(Point(position.x, position.y), theta),
+        Pose(get_point(pose.position), get_heading(pose.orientation)),
         linear=odometry.twist.twist.linear.x,
         angular=odometry.twist.twist.angular.z,
     )
@@ -112,27 +142,130 @@ def build_command_message(command: Command) -> CommandMessage:
     )
 
 
+def get_vertices(path: Path, goal: PoseStamped) -> list[Point]:
+    points = [get_point(stamped.pose.position) for stamped in path.poses]
+    return extract_vertices(points, get_point(goal.pose.position))
+
+
+class PlanClient:
+    """
+    Asks the planner_server for a plan, asynchronously (ADRs 014 and 033).
+
+    Only the answer to the latest goal counts: an older one is discarded by the number of its
+    request, and a new goal cancels the pending one (ADR 034).
+    """
+
+    def __init__(
+        self,
+        node: Node,
+        on_path: Callable[[Path, PoseStamped], None],
+        on_failure: Callable[[str], None],
+    ):
+        self._client = ActionClient(node, ComputePathToPose, PLANNER_ACTION)
+        self._on_path = on_path
+        self._on_failure = on_failure
+        self._request = 0  # number of the latest goal
+        self._pending: ClientGoalHandle | None = None
+
+    def request(self, goal: PoseStamped) -> None:
+        self._cancel_pending()
+        self._request += 1
+        if goal.header.frame_id != MAP_FRAME:
+            self._on_failure(f'goal in {goal.header.frame_id!r}, not in {MAP_FRAME!r}')
+        elif not self._client.server_is_ready():
+            self._on_failure('no planner_server')
+        else:
+            request = self._request
+            future = self._client.send_goal_async(ComputePathToPose.Goal(goal=goal))
+            future.add_done_callback(lambda done: self._on_accepted(done.result(), request, goal))
+
+    def _on_accepted(self, handle: ClientGoalHandle, request: int, goal: PoseStamped) -> None:
+        if request != self._request:
+            handle.cancel_goal_async()  # a newer goal came while this one was sent
+        elif not handle.accepted:
+            self._on_failure('goal rejected by the planner_server')
+        else:
+            self._pending = handle
+            future = handle.get_result_async()
+            future.add_done_callback(lambda done: self._on_result(done.result(), request, goal))
+
+    def _on_result(
+        self,
+        response: ComputePathToPose.Impl.GetResultService.Response,
+        request: int,
+        goal: PoseStamped,
+    ) -> None:
+        if request != self._request:
+            return  # the answer to an older goal (ADR 034)
+        self._pending = None
+        result = response.result
+        if response.status != GoalStatus.STATUS_SUCCEEDED or not result.path.poses:
+            self._on_failure(f'status {response.status}, error {result.error_code}')
+        else:
+            self._on_path(result.path, goal)
+
+    def _cancel_pending(self) -> None:
+        if self._pending is not None:
+            self._pending.cancel_goal_async()
+            self._pending = None
+
+
 class SequencerNode(Node):
     def __init__(self):
         super().__init__('sequencer')
-        mission_name = self.declare_parameter('mission', '').value
-        if mission_name not in MISSIONS:
-            # The mission by plan (empty `mission`) comes with V-04.
-            raise ValueError(f'mission {mission_name!r} unknown; use one of {sorted(MISSIONS)}')
-        self._sequencer = Sequencer(MISSIONS[mission_name]())
+        mission_name = self.declare_parameter('mission', MISSION_BY_PLAN).value
+        if mission_name != MISSION_BY_PLAN and mission_name not in MISSIONS:
+            known = [MISSION_BY_PLAN, *sorted(MISSIONS)]
+            raise ValueError(f'mission {mission_name!r} unknown; use one of {known}')
+        mission = MISSIONS[mission_name]() if mission_name in MISSIONS else None
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)  # no thread (nota 0004)
+        self._sequencer = Sequencer(mission, self._get_map_to_odom)
         self._commands = self.create_publisher(CommandMessage, COMMAND_TOPIC, LINK_QOS)
         self.create_subscription(State, STATE_TOPIC, self._on_state, LINK_QOS)
         self.create_subscription(Odometry, ODOMETRY_TOPIC, self._on_odometry, LINK_QOS)
         self.create_subscription(Empty, HEARTBEAT_TOPIC, self._on_heartbeat, LINK_QOS)
         self._steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(COMMAND_PERIOD_S, self._on_timer)
-        self.get_logger().info(f'mission {mission_name}: waiting for the first Odometry')
+        if mission is None:
+            self._plans = PlanClient(self, self._on_path, self._on_plan_failure)
+            self.create_subscription(PoseStamped, GOAL_TOPIC, self._on_goal, GOAL_QUEUE_DEPTH)
+            self.get_logger().info(f'mission by plan: waiting for {GOAL_TOPIC}')
+        else:
+            self.get_logger().info(f'mission {mission_name}: waiting for the first Odometry')
 
     def _on_state(self, state: State) -> None:
         self._publish_if_new(self._sequencer.on_state(get_state_reading(state), self._get_now_s()))
 
     def _on_odometry(self, odometry: Odometry) -> None:
         self._publish_if_new(self._sequencer.on_odometry(get_odometry_reading(odometry)))
+
+    def _on_goal(self, goal: PoseStamped) -> None:
+        position = goal.pose.position
+        self.get_logger().info(f'goal ({position.x:.3f}, {position.y:.3f}): planning')
+        self._publish_if_new(self._sequencer.wait_for_plan())
+        self._plans.request(goal)
+
+    def _on_path(self, path: Path, goal: PoseStamped) -> None:
+        vertices = get_vertices(path, goal)
+        self.get_logger().info(f'plan of {len(path.poses)} poses, vertices {vertices}')
+        self._publish_if_new(self._sequencer.start(build_plan_mission(vertices)))
+
+    def _on_plan_failure(self, reason: str) -> None:
+        self.get_logger().warning(f'PLAN_FAILED: {reason}')
+        self._publish_if_new(self._sequencer.on_plan_failed())
+
+    def _get_map_to_odom(self) -> Pose | None:
+        """Return the latest pose of odom in map, looked up with timeout zero (ADR 035)."""
+        try:
+            stamped = self._tf_buffer.lookup_transform(
+                MAP_FRAME, ODOM_FRAME, Time(), timeout=Duration()
+            )
+        except TransformException as error:
+            self.get_logger().warning(f'TF_MISSING: {error}')
+            return None
+        transform = stamped.transform
+        return Pose(get_point(transform.translation), get_heading(transform.rotation))
 
     def _on_heartbeat(self, _: Empty) -> None:
         self._sequencer.on_heartbeat(self._get_now_s())

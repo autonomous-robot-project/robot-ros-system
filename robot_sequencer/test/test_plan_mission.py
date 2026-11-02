@@ -95,3 +95,59 @@ def test_last_vertex_reached_ends_the_mission_with_twist_zero():
 
     assert sequencer.on_odometry(at_rest(1.0, 0.0, math.pi / 4)) == STOP
     assert sequencer.status is MissionStatus.SUCCEEDED
+
+
+# --- Life of the mission by plan: idle, planning, start, failure, preemption ---
+
+
+def test_without_a_mission_it_is_idle_with_twist_zero():
+    sequencer = Sequencer(None, get_map_to_odom=lambda: IDENTITY)
+
+    assert sequencer.on_odometry(at_rest(0.0, 0.0, 0.0)) is None
+    assert sequencer.status is MissionStatus.IDLE
+    assert sequencer.command == STOP
+
+
+def test_a_goal_holds_twist_zero_until_its_plan_begins_from_the_latest_pose():
+    sequencer = Sequencer(None, get_map_to_odom=lambda: IDENTITY)
+    sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))
+
+    assert sequencer.wait_for_plan() == STOP
+    assert sequencer.status is MissionStatus.PLANNING
+    turn = sequencer.start(build_plan_mission(VERTICES))
+    assert turn is not None and turn.behavior is Behavior.TURN_TO
+    assert sequencer.status is MissionStatus.RUNNING
+
+
+def test_a_plan_before_the_first_odometry_begins_on_it():
+    sequencer = Sequencer(None, get_map_to_odom=lambda: IDENTITY)
+    sequencer.wait_for_plan()
+
+    assert sequencer.start(build_plan_mission(VERTICES)) is None
+    assert sequencer.status is MissionStatus.WAITING
+    turn = sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))
+    assert turn is not None and turn.behavior is Behavior.TURN_TO
+
+
+def test_a_failed_plan_aborts_with_twist_zero():
+    sequencer = Sequencer(None, get_map_to_odom=lambda: IDENTITY)
+    sequencer.wait_for_plan()
+
+    assert sequencer.on_plan_failed() == STOP
+    assert sequencer.status is MissionStatus.ABORTED
+
+
+def test_a_new_goal_preempts_the_mission_and_the_new_plan_replaces_it():
+    sequencer = Sequencer(None, get_map_to_odom=lambda: IDENTITY)
+    sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))
+    sequencer.start(build_plan_mission(VERTICES))
+
+    assert sequencer.wait_for_plan() == STOP
+    assert sequencer.command == STOP
+    turn = sequencer.start(build_plan_mission([Point(0.0, 1.0)]))
+    assert turn is not None and turn.theta == pytest.approx(math.pi / 2)
+
+
+def test_plan_failed_accepts_only_abort():
+    with pytest.raises(ValueError):
+        Mission([], reactions={Code.PLAN_FAILED: Ignore()})
