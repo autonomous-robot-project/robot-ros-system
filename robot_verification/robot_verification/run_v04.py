@@ -36,13 +36,18 @@ from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from robot_interfaces.msg import Command, State  # noqa: E402
 
 from robot_verification.check_v04 import P_G, PLAN_TOPIC, TF_STATIC_TOPIC  # noqa: E402
-from robot_verification.link import LINK_QOS, BagRecorder, MicroRosAgent  # noqa: E402
+from robot_verification.link import (  # noqa: E402
+    LINK_QOS,
+    BagRecorder,
+    MicroRosAgent,
+    SequencerProcess,
+)
 from robot_verification.recording import (  # noqa: E402
     COMMAND_TOPIC,
     ODOMETRY_TOPIC,
     STATE_TOPIC,
 )
-from robot_verification.run_v07 import SequencerProcess  # noqa: E402
+from robot_verification.run_v07 import get_sequencer_log_path  # noqa: E402
 
 RECORDED_TOPICS: list[str] = [
     PLAN_TOPIC,
@@ -182,7 +187,7 @@ def main() -> None:
             MicroRosAgent(),
             BagRecorder(sys.argv[1], RECORDED_TOPICS),
             DeliberatorLaunch(),
-            SequencerProcess(MISSION_BY_PLAN),
+            SequencerProcess(MISSION_BY_PLAN, get_sequencer_log_path(sys.argv[1])),
             TrialNode() as trial,
         ):
             announce('V-04: agent, recorder, deliberator and sequencer up; wheels suspended?')

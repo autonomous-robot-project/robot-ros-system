@@ -20,12 +20,10 @@ import os
 # Fast DDS only on UDP (ADR 045), set before ROS starts, so the children inherit it.
 os.environ['FASTDDS_BUILTIN_TRANSPORTS'] = 'UDPv4'
 
-import subprocess  # noqa: E402
 import sys  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
 
-from ament_index_python.packages import get_package_prefix  # noqa: E402
 import rclpy  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from robot_interfaces.msg import Instrumentation  # noqa: E402
@@ -34,9 +32,9 @@ from robot_verification.check_v05 import T_E_S  # noqa: E402
 from robot_verification.check_v07 import N_EVENTS, V_R  # noqa: E402
 from robot_verification.link import (  # noqa: E402
     LINK_QOS,
-    REALTIME_PREFIX,
     BagRecorder,
     MicroRosAgent,
+    SequencerProcess,
 )
 from robot_verification.recording import (  # noqa: E402
     COMMAND_TOPIC,
@@ -46,41 +44,15 @@ from robot_verification.recording import (  # noqa: E402
 )
 
 RECORDED_TOPICS: list[str] = [COMMAND_TOPIC, STATE_TOPIC, INSTRUMENTATION_TOPIC, ODOMETRY_TOPIC]
-# The sequencer, in real time like the agent (ADR 039); the executable is started directly, not
-# through `ros2 run`, which does not forward SIGTERM.
-SEQUENCER_EXECUTABLE: str = os.path.join(
-    get_package_prefix('robot_sequencer'), 'lib', 'robot_sequencer', 'sequencer'
-)
 MISSION: str = 'v07'
+# Beside the bag, not inside: ros2 bag creates the directory itself and refuses an existing one.
+SEQUENCER_LOG_SUFFIX: str = '_sequencer.log'
 SESSION_UP_S: float = 5.0  # agent and recorder up, session of the ESP32 established
 # check_v07 leaves out an event answered before the recording; the margin covers it.
 EXTRA_EVENTS: int = 2
 # 300 events of about 1.05 s take 5.3 min; beyond this the run is stopped and judged invalid.
 MAX_TRIAL_S: float = 15 * 60.0
 POLL_S: float = 1.0
-SEQUENCER_STOP_S: float = 5.0
-
-
-class SequencerProcess:
-    """The sequencer with a mission, as a child process; an empty mission waits for /goal_pose."""
-
-    def __init__(self, mission: str) -> None:
-        # Quoted, so that YAML reads an empty mission as an empty string, not as null.
-        self._arguments: list[str] = ['--ros-args', '-p', f"mission:='{mission}'"]
-        self._process: subprocess.Popen | None = None
-
-    def __enter__(self) -> 'SequencerProcess':
-        self._process = subprocess.Popen(
-            [*REALTIME_PREFIX, SEQUENCER_EXECUTABLE, *self._arguments]
-        )
-        return self
-
-    def __exit__(self, *_exception: object) -> None:
-        self._process.terminate()
-        try:
-            self._process.wait(timeout=SEQUENCER_STOP_S)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
 
 
 class EventCounter:
@@ -138,6 +110,10 @@ class V07Procedure:
         return has_events and elapsed_s >= T_E_S
 
 
+def get_sequencer_log_path(bag_path: str) -> str:
+    return os.path.normpath(bag_path) + SEQUENCER_LOG_SUFFIX
+
+
 def announce(text: str) -> None:
     print(f'[{time.strftime("%H:%M:%S")}] {text}', flush=True)
 
@@ -151,7 +127,7 @@ def main() -> None:
         with (
             MicroRosAgent(),
             BagRecorder(sys.argv[1], RECORDED_TOPICS),
-            SequencerProcess(MISSION),
+            SequencerProcess(MISSION, get_sequencer_log_path(sys.argv[1])),
             EventCounter() as counter,
         ):
             announce('V-07: agent, recorder and sequencer up; wheels suspended, motor switch on?')
