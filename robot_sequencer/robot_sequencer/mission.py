@@ -23,11 +23,11 @@ from robot_sequencer.geometry import Point, Pose, wrap_angle
 
 # Tolerances of the default terminations (V-01): above the worst final error of the controller
 # plus the resolution of the odometry, measured on the bench (robot-docs nota 0014):
-# 3.6 deg + 3.9 deg per edge of one wheel, and 6 mm + 10 mm per pulse.
+# 3.6 deg + 4.2 deg per edge of one wheel, and 6 mm + 10 mm per pulse.
 EPSILON_THETA: float = math.radians(10.0)  # rad, ε_θ
 EPSILON_D: float = 0.05  # m, ε_d
 # Largest turn of one TURN_TO, so no target reaches 180 deg from the heading (ADRs 024 and 036):
-# the starting point of ADR 036, with margin over the 4.5 deg per pulse of the odometry.
+# the starting point of ADR 036, with margin over the 4.2 deg per pulse of the odometry.
 THETA_MAX: float = math.radians(170.0)  # rad, θ_max
 
 
