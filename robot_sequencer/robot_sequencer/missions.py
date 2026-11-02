@@ -16,12 +16,12 @@ V-01, sequencing rule (failure is the activation of a code in the State; abort i
 θ₁ = heading at the end of S1 + π/2; (x₁, y₁) = position at the end of S1 + d₂ (cos θ₁, sin θ₁).
 S4 is the TWIST(0, 0) the sequencer sends at the end or the abort of a mission.
 
-The missions of V-01 and V-07 run without the notebook, so they ignore HEARTBEAT_LOST (ADR 038,
-F6 D3); any other event of the sequencer aborts them.
+The missions of V-01 and V-07 run without the notebook, so they ignore HEARTBEAT_LOST (ADR 038);
+any other event of the sequencer aborts them.
 
 V-08: the mission of V-07 under load. Under C2 the link may lag, and the expected effect is the
 expiry of the command (RNF-02), which also leaves the echo in TWIST(0, 0): the mission ignores
-LINK_LOST and COMMAND_NOT_ECHOED as well (ADR 038, F7 D3).
+LINK_LOST and COMMAND_NOT_ECHOED as well (ADR 038).
 
 V-07, repetition rule: TWIST(v_r, 0) -> activation of the test code -> TWIST(0, 0) -> its
 deactivation -> TWIST(v_r, 0). The controller activates FAULT_TEST every T_ev and clears it when

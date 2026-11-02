@@ -5,7 +5,7 @@ Criticality: T2, product (robot-docs codigo.md).
 
 Steps of V-07: start the agent and the sequencer with the mission of V-07, which commands
 TWIST(v_r, 0) and answers each activation of the test code with TWIST(0, 0); record the command,
-the State, the Instrumentation and the Odometry; ground the test pin of the ESP32 (GPIO 12,
+the State, the Instrumentation and the Odometry; ground the test pin of the ESP32 (GPIO 7,
 ADR 049), so that the controller generates the test events; wait for n events; stop.
 
 The same bag serves check_v05, so the recording lasts at least T_e, and the clock drift of
@@ -96,11 +96,11 @@ class V07Procedure:
         self._counter = counter
 
     def run(self) -> None:
-        announce(f'sequencer at TWIST({V_R}, 0): ground GPIO 12 of the ESP32 now (jumper to GND)')
+        announce(f'sequencer at TWIST({V_R}, 0): ground GPIO 7 of the ESP32 now (jumper to GND)')
         started_s = time.monotonic()
         while not self._is_done(time.monotonic() - started_s):
             time.sleep(POLL_S)
-        announce(f'{self._counter.count} events: release GPIO 12 now')
+        announce(f'{self._counter.count} events: release GPIO 7 now')
 
     def _is_done(self, elapsed_s: float) -> bool:
         has_events = self._counter.count >= N_EVENTS + EXTRA_EVENTS

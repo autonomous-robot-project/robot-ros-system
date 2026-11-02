@@ -79,7 +79,8 @@ def main():
         sys.exit(1)
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        # The SIGINT handler of rclpy may have shut the context down already.
+        rclpy.try_shutdown()
     print(f'PASS: state after {first_s:.1f} s; after the agent restart, after {again_s:.1f} s')
 
 

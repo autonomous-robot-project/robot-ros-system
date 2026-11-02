@@ -6,11 +6,11 @@ Criticality: T2, product (robot-docs codigo.md).
 Steps of V-08, for C1 or C2: establish the condition; record the command, the State, the
 Odometry and the Instrumentation, and in C1 the plan; run V-07 for 10 min; stop.
 - C1: the launch of the deliberator of C1 (SLAM on the LD19, planner over M), and the sequencer
-  with the mission of V-08 asks for plans in a loop (F8 D2). The condition holds once the first
+  with the mission of V-08 asks for plans in a loop (nota 0019). The condition holds once the first
   plan arrives, before the recording starts, as check_v08_c1 expects.
 - C2: stress-ng on the 4 cores of the RPi, with the active cooler.
 The mission of V-08 is that of V-07 (TWIST(v_r, 0), TWIST(0, 0) at each test event), with the
-heartbeat of the notebook off (V-08). Beside the bag, for the summary of #26 (F8 D5): pidstat of
+heartbeat of the notebook off (V-08). Beside the bag, for the summary of robot-docs#26: pidstat of
 every process every 5 s with its averages, free -m at the start and the end, and in C2 vcgencmd
 get_throttled before and after, for information only.
 
@@ -59,7 +59,7 @@ MISSION: str = 'v08'
 CONTROLLER_TOPICS: list[str] = [COMMAND_TOPIC, STATE_TOPIC, INSTRUMENTATION_TOPIC, ODOMETRY_TOPIC]
 C1_LAUNCH = ('robot_bringup', 'deliberator_c1.launch.py')
 C2_LOAD: list[str] = ['stress-ng', '--cpu', '4']  # 100 % on the 4 cores (V-08)
-PROCESS_STATS: list[str] = ['pidstat', '-u', '-r', '5']  # CPU and memory per process (F8 D5)
+PROCESS_STATS: list[str] = ['pidstat', '-u', '-r', '5']  # CPU and memory per process (#26)
 # Beside the bag, not inside: ros2 bag creates the directory itself and refuses an existing one.
 SEQUENCER_LOG_SUFFIX: str = '_sequencer.log'
 LOAD_LOG_SUFFIX: str = '_stress.log'

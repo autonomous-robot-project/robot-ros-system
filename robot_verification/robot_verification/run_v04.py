@@ -24,8 +24,6 @@ import os
 # Fast DDS only on UDP (ADR 045), set before ROS starts, so the children inherit it.
 os.environ['FASTDDS_BUILTIN_TRANSPORTS'] = 'UDPv4'
 
-import signal  # noqa: E402
-import subprocess  # noqa: E402
 import sys  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
@@ -40,6 +38,7 @@ from robot_verification.link import (  # noqa: E402
     LINK_QOS,
     BagRecorder,
     MicroRosAgent,
+    RosLaunch,
     SequencerProcess,
 )
 from robot_verification.recording import (  # noqa: E402
@@ -58,7 +57,6 @@ RECORDED_TOPICS: list[str] = [
 ]
 GOAL_TOPIC = '/goal_pose'
 HEARTBEAT_TOPIC = '/heartbeat'
-DELIBERATOR_LAUNCH: list[str] = ['ros2', 'launch', 'robot_bringup', 'deliberator_test.launch.py']
 MISSION_BY_PLAN: str = ''  # an empty mission waits for /goal_pose
 SESSION_UP_S: float = 5.0  # agent, recorder, deliberator and sequencer up
 WAIT_FOR_PEER_S: float = 30.0  # heartbeat publisher and goal subscriber
@@ -69,27 +67,6 @@ STOP_HOLD_S: float = 1.0
 # check_v04 judges what was recorded.
 MAX_TRIAL_S: float = 120.0
 POLL_S: float = 0.1
-LAUNCH_STOP_S: float = 10.0
-
-
-class DeliberatorLaunch:
-    """The trial launch of the deliberator, as a child process."""
-
-    def __init__(self) -> None:
-        self._process: subprocess.Popen | None = None
-
-    def __enter__(self) -> 'DeliberatorLaunch':
-        self._process = subprocess.Popen(DELIBERATOR_LAUNCH)
-        return self
-
-    def __exit__(self, *_exception: object) -> None:
-        # SIGINT, not SIGTERM: ros2 launch stopped by SIGTERM left its nodes running
-        # (robot-docs nota 0003).
-        self._process.send_signal(signal.SIGINT)
-        try:
-            self._process.wait(timeout=LAUNCH_STOP_S)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
 
 
 class TrialNode:
@@ -186,7 +163,7 @@ def main() -> None:
         with (
             MicroRosAgent(),
             BagRecorder(sys.argv[1], RECORDED_TOPICS),
-            DeliberatorLaunch(),
+            RosLaunch('robot_bringup', 'deliberator_test.launch.py'),
             SequencerProcess(MISSION_BY_PLAN, get_sequencer_log_path(sys.argv[1])),
             TrialNode() as trial,
         ):

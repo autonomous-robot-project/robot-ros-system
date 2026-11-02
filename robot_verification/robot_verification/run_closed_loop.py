@@ -55,7 +55,8 @@ def main() -> None:
             run_schedule(node, node.create_publisher(Command, COMMAND_TOPIC, LINK_QOS))
             node.destroy_node()
     finally:
-        rclpy.shutdown()
+        # The SIGINT handler of rclpy may have shut the context down already.
+        rclpy.try_shutdown()
     print(f'done: measure_closed_loop {sys.argv[1]}')
 
 
