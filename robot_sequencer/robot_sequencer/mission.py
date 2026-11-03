@@ -106,7 +106,7 @@ class Condition(Enum):
     # Events of the sequencer.
     TF_MISSING = auto()  # no map -> odom at the entry of a step with a MapPoint (ADR 035)
     PLAN_FAILED = auto()  # planner error, empty path or no planner_server (ADR 034)
-    NO_PROGRESS = auto()  # at rest out of tolerance, after moving in the step (ADR 036)
+    NO_PROGRESS = auto()  # at rest out of tolerance for T_stall, after moving (ADR 036)
     COMMAND_NOT_ECHOED = auto()  # the echo differs from the command for more than T_eco (ADR 037)
     LINK_LOST = auto()  # no State for more than T_LINK (ADR 037)
     HEARTBEAT_LOST = auto()  # no heartbeat of the notebook for more than T_HB (ADR 037)

@@ -16,8 +16,8 @@ thread, publishes right away the command a call returns, and republishes `comman
   current step again, with a new pose; ignore leaves the step running. With several codes
   activated at once, abort comes first, then recover.
 - A TURN_TO above θ_max turns θ_max toward the target and, once there, enters the step again;
-  a TURN_TO or GO_TO that comes to rest out of its tolerance after moving raises NO_PROGRESS,
-  which gets its reaction like a code (ADR 036).
+  a TURN_TO or GO_TO that stays at rest out of its tolerance for T_stall after moving raises
+  NO_PROGRESS, which gets its reaction like a code (ADR 036).
 - The sequencer watches the link and the notebook (ADR 037) with three conditions that join the
   codes of the State: COMMAND_NOT_ECHOED (the echo differs from the command for more than T_eco),
   LINK_LOST (no State for more than T_LINK, counted from the first State) and HEARTBEAT_LOST (no
@@ -66,6 +66,14 @@ LINK_TIMEOUT_S: float = COMMAND_EXPIRY_S  # T_LINK = T_cmd: the controller has s
 ECHO_TIMEOUT_S: float = 0.3  # T_eco
 HEARTBEAT_TIMEOUT_S: float = 0.5  # T_HB
 
+# T_stall (ADR 036): rest out of tolerance that raises NO_PROGRESS, counted in Odometry readings.
+# It covers the ramp from rest to v_min (0.28 s), T_vel (0.3 s) and the dead zone of the motors,
+# where one edge and then T_vel at rest gave a false NO_PROGRESS (robot-docs nota 0018); the same
+# 1 s as T_f of V-02.
+STALL_TIME_S: float = 1.0
+ODOMETRY_PERIOD_S: float = 0.05  # 20 Hz (ADR 025)
+STALL_READINGS: int = round(STALL_TIME_S / ODOMETRY_PERIOD_S)
+
 
 class MissionStatus(Enum):
     IDLE = auto()  # no mission: the mission by plan waits for a goal
@@ -84,12 +92,19 @@ class RunningStep:
     command: Command
     is_recovery: bool
     is_partial_turn: bool  # a TURN_TO cut to θ_max: the step is entered again at its end
-    was_moving: bool = False  # on the previous Odometry of the step
+    has_moved: bool = False  # in some Odometry of the step
+    rest_readings: int = 0  # consecutive readings at rest since the last motion
 
-    def has_stalled(self, reading: OdometryReading) -> bool:
-        """Return whether the robot just came to rest out of the tolerance of the step."""
+    def note_motion(self, reading: OdometryReading) -> None:
+        if reading.is_at_rest:
+            self.rest_readings += 1
+        else:
+            self.has_moved, self.rest_readings = True, 0
+
+    def has_stalled(self) -> bool:
+        """Return whether the robot has just completed T_stall at rest, out of the tolerance."""
         has_tolerance = isinstance(self.step.termination, HeadingReached | PositionReached)
-        return has_tolerance and self.was_moving and reading.is_at_rest
+        return has_tolerance and self.has_moved and self.rest_readings == STALL_READINGS
 
     def is_done_by_reading(self, reading: OdometryReading) -> bool:
         termination = self.step.termination
@@ -141,9 +156,9 @@ class Sequencer:
             return None
         if running.is_done_by_reading(reading):
             return self._end_step(running)
-        if running.has_stalled(reading):
+        running.note_motion(reading)
+        if running.has_stalled():
             return self._react_to(running, frozenset({Condition.NO_PROGRESS}))
-        running.was_moving = not reading.is_at_rest
         return None
 
     def on_state(self, state: StateReading, now: float) -> Command | None:

@@ -16,7 +16,7 @@ from robot_sequencer.mission import (
     limit_turn,
 )
 from robot_sequencer.missions import build_plan_mission, build_v01_mission
-from robot_sequencer.sequencer import MissionStatus, Sequencer
+from robot_sequencer.sequencer import STALL_READINGS, MissionStatus, Sequencer
 
 IDENTITY = Pose(Point(0.0, 0.0), 0.0)
 BEHIND = Point(-1.0, 0.01)  # 179.4 deg from the heading 0 at the origin, to the left
@@ -32,6 +32,19 @@ def moving(x: float, y: float, theta: float) -> OdometryReading:
 
 def build_plan_sequencer(mission: Mission) -> Sequencer:
     return Sequencer(mission, get_map_to_odom=lambda: IDENTITY)
+
+
+def build_moved_go_to() -> Sequencer:
+    """Return a sequencer in the GO_TO of a plan to (1, 0), after one reading in motion."""
+    sequencer = build_plan_sequencer(build_plan_mission([Point(1.0, 0.0)]))
+    sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # TURN_TO, already aligned
+    sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # GO_TO
+    sequencer.on_odometry(moving(0.5, 0.0, 0.0))
+    return sequencer
+
+
+def stay_at_rest(sequencer: Sequencer, readings: int) -> list[Command | None]:
+    return [sequencer.on_odometry(at_rest(0.8, 0.0, 0.0)) for _ in range(readings)]
 
 
 @pytest.mark.parametrize('theta', [0.0, math.radians(90.0), THETA_MAX, -THETA_MAX])
@@ -69,14 +82,21 @@ def test_turn_to_a_target_behind_is_done_in_two_parts():
     assert go is not None and go.behavior is Behavior.GO_TO
 
 
-def test_go_to_at_rest_out_of_tolerance_after_moving_aborts():
-    sequencer = build_plan_sequencer(build_plan_mission([Point(1.0, 0.0)]))
-    sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # TURN_TO, already aligned
-    sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # GO_TO
-    sequencer.on_odometry(moving(0.5, 0.0, 0.0))
+def test_go_to_at_rest_out_of_tolerance_for_t_stall_after_moving_aborts():
+    sequencer = build_moved_go_to()
 
-    assert sequencer.on_odometry(at_rest(0.8, 0.0, 0.0)) == STOP
+    assert stay_at_rest(sequencer, STALL_READINGS)[-1] == STOP
     assert sequencer.status is MissionStatus.ABORTED
+
+
+def test_rest_shorter_than_t_stall_is_not_a_stall():
+    # One edge and then T_vel at rest, while the ramp crosses the dead zone (robot-docs nota 0018).
+    sequencer = build_moved_go_to()
+
+    assert stay_at_rest(sequencer, STALL_READINGS - 1) == [None] * (STALL_READINGS - 1)
+    sequencer.on_odometry(moving(0.9, 0.0, 0.0))  # the wheels get going
+    assert stay_at_rest(sequencer, STALL_READINGS - 1) == [None] * (STALL_READINGS - 1)
+    assert sequencer.status is MissionStatus.RUNNING
 
 
 def test_rest_at_the_entry_of_the_step_is_not_a_stall():
@@ -84,7 +104,8 @@ def test_rest_at_the_entry_of_the_step_is_not_a_stall():
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # TURN_TO
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # GO_TO, not moved yet
 
-    assert sequencer.on_odometry(at_rest(0.0, 0.0, 0.0)) is None
+    rests = [sequencer.on_odometry(at_rest(0.0, 0.0, 0.0)) for _ in range(2 * STALL_READINGS)]
+    assert rests == [None] * (2 * STALL_READINGS)
     assert sequencer.status is MissionStatus.RUNNING
 
 
@@ -93,7 +114,8 @@ def test_twist_to_a_distance_has_no_tolerance_and_no_stall():
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # S1
     sequencer.on_odometry(moving(0.5, 0.0, 0.0))
 
-    assert sequencer.on_odometry(at_rest(0.5, 0.0, 0.0)) is None
+    rests = [sequencer.on_odometry(at_rest(0.5, 0.0, 0.0)) for _ in range(2 * STALL_READINGS)]
+    assert rests == [None] * (2 * STALL_READINGS)
     assert sequencer.status is MissionStatus.RUNNING
 
 
@@ -105,6 +127,5 @@ def test_ignored_no_progress_is_raised_once_per_stop():
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # GO_TO
     sequencer.on_odometry(moving(0.5, 0.0, 0.0))
 
-    assert sequencer.on_odometry(at_rest(0.8, 0.0, 0.0)) is None
-    assert sequencer.on_odometry(at_rest(0.8, 0.0, 0.0)) is None
+    assert stay_at_rest(sequencer, 2 * STALL_READINGS) == [None] * (2 * STALL_READINGS)
     assert sequencer.status is MissionStatus.RUNNING
