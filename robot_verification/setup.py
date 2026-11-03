@@ -45,6 +45,7 @@ setup(
             'plot_clock_drift = robot_verification.plot_clock_drift:main',
             'plot_recording = robot_verification.plot_recording:main',
             'plot_v01 = robot_verification.plot_v01:main',
+            'plot_final_round = robot_verification.plot_final_round:main',
         ],
     },
 )
