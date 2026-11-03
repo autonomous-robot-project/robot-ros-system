@@ -51,7 +51,7 @@ from std_msgs.msg import Empty
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from robot_sequencer.geometry import Point, Pose
-from robot_sequencer.mission import Behavior, Code, Command, OdometryReading, StateReading
+from robot_sequencer.mission import Behavior, Command, Condition, OdometryReading, StateReading
 from robot_sequencer.missions import MISSIONS, build_plan_mission
 from robot_sequencer.plan import extract_vertices
 from robot_sequencer.sequencer import Sequencer
@@ -87,29 +87,29 @@ LINK_QOS = QoSProfile(
 COMMAND_PERIOD_S: float = 0.05  # 1 / f_cmd, f_cmd = 20 Hz (ADR 033)
 NS_PER_S: float = 1e9
 
-FAULT_CODES: dict[int, Code] = {
-    State.FAULT_COGNIZANT: Code.FAULT_COGNIZANT,
-    State.FAULT_DEADLINE_MISSED: Code.FAULT_DEADLINE_MISSED,
-    State.FAULT_WATCHDOG_RESTART: Code.FAULT_WATCHDOG_RESTART,
-    State.FAULT_FRONT_SENSOR: Code.FAULT_FRONT_SENSOR,
-    State.FAULT_TEST: Code.FAULT_TEST,
+FAULT_CONDITIONS: dict[int, Condition] = {
+    State.FAULT_COGNIZANT: Condition.FAULT_COGNIZANT,
+    State.FAULT_DEADLINE_MISSED: Condition.FAULT_DEADLINE_MISSED,
+    State.FAULT_WATCHDOG_RESTART: Condition.FAULT_WATCHDOG_RESTART,
+    State.FAULT_FRONT_SENSOR: Condition.FAULT_FRONT_SENSOR,
+    State.FAULT_TEST: Condition.FAULT_TEST,
 }
-REFLEX_CODES: dict[int, Code] = {
-    State.REFLEX_FRONT_OBSTACLE: Code.REFLEX_FRONT_OBSTACLE,
+REFLEX_CONDITIONS: dict[int, Condition] = {
+    State.REFLEX_FRONT_OBSTACLE: Condition.REFLEX_FRONT_OBSTACLE,
 }
 MASK_BITS = 32  # uint32 masks of State.msg
 
 
-def get_active_codes(state: State) -> frozenset[Code]:
-    return get_codes_of_mask(state.faults, FAULT_CODES) | get_codes_of_mask(
-        state.reflexes, REFLEX_CODES
+def get_active_conditions(state: State) -> frozenset[Condition]:
+    return get_conditions_of_mask(state.faults, FAULT_CONDITIONS) | get_conditions_of_mask(
+        state.reflexes, REFLEX_CONDITIONS
     )
 
 
-def get_codes_of_mask(mask: int, codes: dict[int, Code]) -> frozenset[Code]:
-    """Return the code of each set bit; a bit not in `codes` is Code.UNKNOWN."""
+def get_conditions_of_mask(mask: int, conditions: dict[int, Condition]) -> frozenset[Condition]:
+    """Return the code of each set bit; a bit not in `conditions` is Condition.UNKNOWN."""
     bits = (1 << position for position in range(MASK_BITS))
-    return frozenset(codes.get(bit, Code.UNKNOWN) for bit in bits if mask & bit)
+    return frozenset(conditions.get(bit, Condition.UNKNOWN) for bit in bits if mask & bit)
 
 
 def get_command(message: CommandMessage) -> Command:
@@ -124,7 +124,7 @@ def get_command(message: CommandMessage) -> Command:
 
 
 def get_state_reading(state: State) -> StateReading:
-    return StateReading(get_active_codes(state), echo=get_command(state.echo))
+    return StateReading(get_active_conditions(state), echo=get_command(state.echo))
 
 
 def get_heading(orientation: Quaternion) -> float:
@@ -273,30 +273,49 @@ class PlanningLoad:
 
 
 class SequencerNode(Node):
+    """Adapter between the topics and the Sequencer, which holds the logic (ADR 047)."""
+
     def __init__(self):
         super().__init__('sequencer')
+        mission_name = self._read_mission_name()
+        self._steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)  # no thread (nota 0004)
+        if mission_name == MISSION_BY_PLAN:
+            self._sequencer = Sequencer(None, self._get_map_to_odom)
+            self._wait_for_goals()
+        else:
+            self._sequencer = Sequencer(MISSIONS[mission_name](), self._get_map_to_odom)
+            self._start_test_mission(mission_name)
+        self._connect_to_controller()
+
+    def _read_mission_name(self) -> str:
+        """Return the parameter `mission`, if it names a known mission."""
         mission_name = self.declare_parameter('mission', MISSION_BY_PLAN).value
         if mission_name != MISSION_BY_PLAN and mission_name not in MISSIONS:
             known = [MISSION_BY_PLAN, *sorted(MISSIONS)]
             raise ValueError(f'mission {mission_name!r} unknown; use one of {known}')
-        mission = MISSIONS[mission_name]() if mission_name in MISSIONS else None
-        self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self)  # no thread (nota 0004)
-        self._sequencer = Sequencer(mission, self._get_map_to_odom)
+        return mission_name
+
+    def _wait_for_goals(self) -> None:
+        """Send each goal of /goal_pose to the planner: the mission by plan (ADR 034)."""
+        self._plans = PlanClient(self, self._on_path, self._on_plan_failure)
+        self.create_subscription(PoseStamped, GOAL_TOPIC, self._on_goal, GOAL_QUEUE_DEPTH)
+        self.get_logger().info(f'mission by plan: waiting for {GOAL_TOPIC}')
+
+    def _start_test_mission(self, mission_name: str) -> None:
+        """Log the test mission, which begins on the first Odometry; in C1 of V-08, plan too."""
+        if mission_name == MISSION_WITH_PLANNING_LOAD:
+            self._load = PlanningLoad(self)
+        self.get_logger().info(f'mission {mission_name}: waiting for the first Odometry')
+
+    def _connect_to_controller(self) -> None:
+        """Subscribe to the link and the heartbeat; republish the command at f_cmd (ADR 033)."""
         self._commands = self.create_publisher(CommandMessage, COMMAND_TOPIC, LINK_QOS)
         self.create_subscription(State, STATE_TOPIC, self._on_state, LINK_QOS)
         self.create_subscription(Odometry, ODOMETRY_TOPIC, self._on_odometry, LINK_QOS)
         self.create_subscription(Empty, HEARTBEAT_TOPIC, self._on_heartbeat, LINK_QOS)
-        self._steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(COMMAND_PERIOD_S, self._on_timer)
-        if mission_name == MISSION_WITH_PLANNING_LOAD:
-            self._load = PlanningLoad(self)
-        if mission is None:
-            self._plans = PlanClient(self, self._on_path, self._on_plan_failure)
-            self.create_subscription(PoseStamped, GOAL_TOPIC, self._on_goal, GOAL_QUEUE_DEPTH)
-            self.get_logger().info(f'mission by plan: waiting for {GOAL_TOPIC}')
-        else:
-            self.get_logger().info(f'mission {mission_name}: waiting for the first Odometry')
 
     def _on_state(self, state: State) -> None:
         self._publish_if_new(self._sequencer.on_state(get_state_reading(state), self._get_now_s()))
@@ -348,8 +367,12 @@ class SequencerNode(Node):
     def _log_if_new(self, command: Command | None) -> None:
         if command is None:
             return
-        codes = self._sequencer.pop_reaction_codes()
-        cause = f' on {", ".join(sorted(code.name for code in codes))}' if codes else ''
+        conditions = self._sequencer.pop_reaction_conditions()
+        cause = (
+            f' on {", ".join(sorted(condition.name for condition in conditions))}'
+            if conditions
+            else ''
+        )
         self.get_logger().info(f'{self._sequencer.status.name}: {command}{cause}')
 
     def _get_now_s(self) -> float:

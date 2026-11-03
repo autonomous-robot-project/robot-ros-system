@@ -2,8 +2,8 @@ from robot_sequencer.geometry import Point, Pose
 from robot_sequencer.mission import (
     STOP,
     Behavior,
-    Code,
     Command,
+    Condition,
     DistanceFromStart,
     GoTo,
     HeadingReached,
@@ -24,9 +24,13 @@ from robot_sequencer.missions import (
 from robot_sequencer.sequencer import ECHO_TIMEOUT_S, MissionStatus, Sequencer
 
 
-def report(sequencer: Sequencer, codes: frozenset[Code], now: float = 0.0) -> Command | None:
+def report(
+    sequencer: Sequencer, conditions: frozenset[Condition], now: float = 0.0
+) -> Command | None:
     """Send a State at now that echoes the command in force."""
-    return sequencer.on_state(StateReading(codes, echo=sequencer.command.round_to_float32()), now)
+    return sequencer.on_state(
+        StateReading(conditions, echo=sequencer.command.round_to_float32()), now
+    )
 
 
 def test_v01_has_the_steps_of_its_sequencing_rule():
@@ -63,7 +67,7 @@ def test_the_node_parameter_names_v01():
 def test_v07_repeats_twist_vr_then_stop_until_the_test_code_clears():
     sequencer = Sequencer(build_v07_mission())
     forward = sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), 0.0, 0.0))
-    test_code = frozenset({Code.FAULT_TEST})
+    test_code = frozenset({Condition.FAULT_TEST})
 
     assert forward == Command(Behavior.TWIST, linear=V_R)
     for _ in range(2):
@@ -75,7 +79,7 @@ def test_v07_aborts_on_any_other_code():
     sequencer = Sequencer(build_v07_mission())
     sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), 0.0, 0.0))
 
-    assert report(sequencer, frozenset({Code.FAULT_DEADLINE_MISSED})) == STOP
+    assert report(sequencer, frozenset({Condition.FAULT_DEADLINE_MISSED})) == STOP
     assert sequencer.status is MissionStatus.ABORTED
 
 
@@ -88,7 +92,7 @@ def test_v08_repeats_like_v07():
     forward = sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), 0.0, 0.0))
 
     assert forward == Command(Behavior.TWIST, linear=V_R)
-    assert report(sequencer, frozenset({Code.FAULT_TEST})) == STOP
+    assert report(sequencer, frozenset({Condition.FAULT_TEST})) == STOP
     assert report(sequencer, frozenset()) == forward
 
 
@@ -101,7 +105,9 @@ def test_v08_goes_on_through_an_expired_command_and_a_lost_link():
     assert sequencer.on_state(expired, 0.1) is None
     assert sequencer.on_state(expired, 0.1 + ECHO_TIMEOUT_S + 0.01) is None  # not echoed
     assert sequencer.on_timer(1.0) is None  # no State for more than T_LINK
-    assert report(sequencer, frozenset({Code.FAULT_TEST}), now=1.01) == STOP  # the link is back
+    assert (
+        report(sequencer, frozenset({Condition.FAULT_TEST}), now=1.01) == STOP
+    )  # the link is back
     assert sequencer.status is MissionStatus.RUNNING
 
 
@@ -109,7 +115,7 @@ def test_v08_aborts_on_any_other_code():
     sequencer = Sequencer(build_v08_mission())
     sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), 0.0, 0.0))
 
-    assert report(sequencer, frozenset({Code.FAULT_DEADLINE_MISSED})) == STOP
+    assert report(sequencer, frozenset({Condition.FAULT_DEADLINE_MISSED})) == STOP
     assert sequencer.status is MissionStatus.ABORTED
 
 

@@ -8,7 +8,7 @@ from robot_sequencer.mission import (
     STOP,
     Abort,
     Behavior,
-    Code,
+    Condition,
     GoTo,
     Ignore,
     MapPoint,
@@ -37,20 +37,22 @@ def test_each_vertex_gives_a_turn_to_and_a_go_to_aimed_at_it():
         assert go.behavior.target == MapPoint(vertex)
 
 
-@pytest.mark.parametrize('code', [Code.REFLEX_FRONT_OBSTACLE, Code.FAULT_FRONT_SENSOR])
-def test_front_codes_are_ignored_in_the_turn_and_abort_the_go_to(code):
+@pytest.mark.parametrize(
+    'condition', [Condition.REFLEX_FRONT_OBSTACLE, Condition.FAULT_FRONT_SENSOR]
+)
+def test_front_conditions_are_ignored_in_the_turn_and_abort_the_go_to(condition):
     mission = build_plan_mission(VERTICES)
     turn, go = mission.steps[:2]
 
-    assert mission.get_reaction(turn, code) == Ignore()
-    assert mission.get_reaction(go, code) == Abort()
+    assert mission.get_reaction(turn, condition) == Ignore()
+    assert mission.get_reaction(go, condition) == Abort()
 
 
-def test_deadline_missed_is_ignored_and_other_codes_abort():
+def test_deadline_missed_is_ignored_and_other_conditions_abort():
     mission = build_plan_mission(VERTICES)
     for step in mission.steps[:2]:
-        assert mission.get_reaction(step, Code.FAULT_DEADLINE_MISSED) == Ignore()
-        assert mission.get_reaction(step, Code.FAULT_COGNIZANT) == Abort()
+        assert mission.get_reaction(step, Condition.FAULT_DEADLINE_MISSED) == Ignore()
+        assert mission.get_reaction(step, Condition.FAULT_COGNIZANT) == Abort()
 
 
 def test_steps_aim_at_the_vertices_converted_to_odom():
@@ -83,9 +85,9 @@ def test_without_map_to_odom_the_mission_aborts_with_twist_zero():
 
 def test_tf_missing_accepts_only_abort_in_the_mission_and_in_the_step():
     with pytest.raises(ValueError):
-        Mission([], reactions={Code.TF_MISSING: Ignore()})
+        Mission([], reactions={Condition.TF_MISSING: Ignore()})
     with pytest.raises(ValueError):
-        Step(GoTo(MapPoint(Point(1.0, 0.0))), reactions={Code.TF_MISSING: Ignore()})
+        Step(GoTo(MapPoint(Point(1.0, 0.0))), reactions={Condition.TF_MISSING: Ignore()})
 
 
 def test_last_vertex_reached_ends_the_mission_with_twist_zero():
@@ -150,4 +152,4 @@ def test_a_new_goal_preempts_the_mission_and_the_new_plan_replaces_it():
 
 def test_plan_failed_accepts_only_abort():
     with pytest.raises(ValueError):
-        Mission([], reactions={Code.PLAN_FAILED: Ignore()})
+        Mission([], reactions={Condition.PLAN_FAILED: Ignore()})

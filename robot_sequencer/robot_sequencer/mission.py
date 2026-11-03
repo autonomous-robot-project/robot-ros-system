@@ -93,7 +93,7 @@ class OdometryReading:
         return self.linear == 0.0 and self.angular == 0.0
 
 
-class Code(Enum):
+class Condition(Enum):
     """Condition that gets a reaction: a bit of the State (ADR 025) or an event (ADR 037)."""
 
     FAULT_COGNIZANT = auto()
@@ -114,12 +114,14 @@ class Code(Enum):
 
 @dataclass(frozen=True)
 class StateReading:
-    codes: frozenset[Code]  # active, from the masks of the State
+    conditions: frozenset[Condition]  # active, from the masks of the State
     echo: Command  # command in force in the controller this cycle
 
 
 # Codes of a failure that leaves the step without a target: their only reaction is abort.
-ABORT_ONLY_CODES: frozenset[Code] = frozenset({Code.TF_MISSING, Code.PLAN_FAILED})
+ABORT_ONLY_CONDITIONS: frozenset[Condition] = frozenset(
+    {Condition.TF_MISSING, Condition.PLAN_FAILED}
+)
 
 
 @dataclass(frozen=True)
@@ -142,11 +144,13 @@ class Recover:
 Reaction = Abort | Ignore | Recover
 
 
-def check_abort_only(reactions: Mapping[Code, Reaction]) -> None:
+def check_abort_only(reactions: Mapping[Condition, Reaction]) -> None:
     """Raise if a table gives a code of ABORT_ONLY_CODES a reaction other than abort."""
-    for code in ABORT_ONLY_CODES & reactions.keys():
-        if not isinstance(reactions[code], Abort):
-            raise ValueError(f'{code.name} has no target to go on with: its reaction is abort')
+    for condition in ABORT_ONLY_CONDITIONS & reactions.keys():
+        if not isinstance(reactions[condition], Abort):
+            raise ValueError(
+                f'{condition.name} has no target to go on with: its reaction is abort'
+            )
 
 
 # Returns the latest pose of odom in map, None if the transform is not available; called only by
@@ -257,7 +261,7 @@ class Never:
 class Cleared:
     """The code is no longer active (ADR 037); tested on each State, where the codes change."""
 
-    code: Code
+    condition: Condition
 
 
 PoseTermination = DistanceFromStart | HeadingReached | PositionReached | Never
@@ -304,7 +308,7 @@ StepBehavior = Twist | TurnTo | GoTo
 class Step:
     behavior: StepBehavior
     until: Termination | None = None  # None: the default termination of the behavior
-    reactions: Mapping[Code, Reaction] = field(default_factory=dict)
+    reactions: Mapping[Condition, Reaction] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.until is None and self.behavior.default_termination is None:
@@ -318,20 +322,20 @@ class Step:
         return termination
 
 
-def wait_until_clear(code: Code) -> Step:
+def wait_until_clear(condition: Condition) -> Step:
     """Return a step that holds TWIST(0, 0) until the code clears, ignoring it (ADR 038)."""
     # The timeout T_WAIT of ADR 038 comes with the mission by plan (V-04), its only user.
-    return Step(Twist(0.0, 0.0), until=Cleared(code), reactions={code: Ignore()})
+    return Step(Twist(0.0, 0.0), until=Cleared(condition), reactions={condition: Ignore()})
 
 
 @dataclass(frozen=True)
 class Mission:
     steps: Sequence[Step]
-    reactions: Mapping[Code, Reaction] = field(default_factory=dict)
+    reactions: Mapping[Condition, Reaction] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         check_abort_only(self.reactions)
 
-    def get_reaction(self, step: Step, code: Code) -> Reaction:
+    def get_reaction(self, step: Step, condition: Condition) -> Reaction:
         """Return the reaction of the step to the code, else of the mission, else abort."""
-        return step.reactions.get(code) or self.reactions.get(code) or Abort()
+        return step.reactions.get(condition) or self.reactions.get(condition) or Abort()

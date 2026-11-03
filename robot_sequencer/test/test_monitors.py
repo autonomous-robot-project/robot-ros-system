@@ -5,8 +5,8 @@ from robot_sequencer.geometry import Point, Pose
 from robot_sequencer.mission import (
     STOP,
     Behavior,
-    Code,
     Command,
+    Condition,
     Mission,
     Never,
     OdometryReading,
@@ -24,7 +24,7 @@ from robot_sequencer.sequencer import (
     Sequencer,
 )
 
-NO_CODES: frozenset[Code] = frozenset()
+NO_CONDITIONS: frozenset[Condition] = frozenset()
 MARGIN_S = 0.01
 FORWARD = Command(Behavior.TWIST, linear=0.2)
 FORWARD_ECHO = FORWARD.round_to_float32()
@@ -36,7 +36,7 @@ def started(mission: Mission, heartbeat: bool = True) -> Sequencer:
     if heartbeat:
         sequencer.on_heartbeat(0.0)
     sequencer.on_odometry(OdometryReading(Pose(Point(0.0, 0.0), 0.0), linear=0.0, angular=0.0))
-    sequencer.on_state(StateReading(NO_CODES, echo=sequencer.command.round_to_float32()), 0.0)
+    sequencer.on_state(StateReading(NO_CONDITIONS, echo=sequencer.command.round_to_float32()), 0.0)
     return sequencer
 
 
@@ -53,10 +53,10 @@ def test_echo_rounded_to_float32_is_the_command():
 
 def test_echo_that_differs_up_to_t_eco_is_tolerated():
     sequencer = started(forward_mission())
-    assert sequencer.on_state(StateReading(NO_CODES, echo=STOP), 0.01) is None
-    assert sequencer.on_state(StateReading(NO_CODES, echo=STOP), ECHO_TIMEOUT_S) is None
+    assert sequencer.on_state(StateReading(NO_CONDITIONS, echo=STOP), 0.01) is None
+    assert sequencer.on_state(StateReading(NO_CONDITIONS, echo=STOP), ECHO_TIMEOUT_S) is None
     assert (
-        sequencer.on_state(StateReading(NO_CODES, echo=FORWARD_ECHO), ECHO_TIMEOUT_S + 0.01)
+        sequencer.on_state(StateReading(NO_CONDITIONS, echo=FORWARD_ECHO), ECHO_TIMEOUT_S + 0.01)
         is None
     )
     assert sequencer.status is MissionStatus.RUNNING
@@ -64,10 +64,10 @@ def test_echo_that_differs_up_to_t_eco_is_tolerated():
 
 def test_echo_that_differs_beyond_t_eco_aborts():
     sequencer = started(forward_mission())
-    sequencer.on_state(StateReading(NO_CODES, echo=STOP), 0.01)
+    sequencer.on_state(StateReading(NO_CONDITIONS, echo=STOP), 0.01)
     late = 0.01 + ECHO_TIMEOUT_S + MARGIN_S
 
-    assert sequencer.on_state(StateReading(NO_CODES, echo=STOP), late) == STOP
+    assert sequencer.on_state(StateReading(NO_CONDITIONS, echo=STOP), late) == STOP
     assert sequencer.status is MissionStatus.ABORTED
 
 
@@ -92,10 +92,10 @@ def test_age_of_the_state_counts_from_the_first_state():
 
 def test_heartbeat_older_than_t_hb_aborts():
     sequencer = started(forward_mission())
-    sequencer.on_state(StateReading(NO_CODES, echo=FORWARD_ECHO), HEARTBEAT_TIMEOUT_S)
+    sequencer.on_state(StateReading(NO_CONDITIONS, echo=FORWARD_ECHO), HEARTBEAT_TIMEOUT_S)
 
     late = HEARTBEAT_TIMEOUT_S + MARGIN_S
-    assert sequencer.on_state(StateReading(NO_CODES, echo=FORWARD_ECHO), late) == STOP
+    assert sequencer.on_state(StateReading(NO_CONDITIONS, echo=FORWARD_ECHO), late) == STOP
     assert sequencer.status is MissionStatus.ABORTED
 
 
@@ -109,7 +109,9 @@ def test_mission_does_not_begin_without_heartbeat():
 def test_missions_of_the_verifications_run_without_heartbeat(build_mission):
     sequencer = started(build_mission(), heartbeat=False)
     echo = sequencer.command.round_to_float32()
-    sequencer.on_state(StateReading(NO_CODES, echo=echo), HEARTBEAT_TIMEOUT_S)  # the link is up
+    sequencer.on_state(
+        StateReading(NO_CONDITIONS, echo=echo), HEARTBEAT_TIMEOUT_S
+    )  # the link is up
 
     assert sequencer.on_timer(HEARTBEAT_TIMEOUT_S + MARGIN_S) is None
     assert sequencer.status is MissionStatus.RUNNING

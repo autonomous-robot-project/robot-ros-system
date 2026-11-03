@@ -4,18 +4,29 @@ import math
 
 import pytest
 from robot_sequencer.geometry import Point, Pose
-from robot_sequencer.mission import STOP, Behavior, Code, Command, OdometryReading, StateReading
+from robot_sequencer.mission import (
+    STOP,
+    Behavior,
+    Command,
+    Condition,
+    OdometryReading,
+    StateReading,
+)
 from robot_sequencer.missions import build_v01_mission
 from robot_sequencer.sequencer import MissionStatus, Sequencer
 
 
-def report(sequencer: Sequencer, codes: frozenset[Code], now: float = 0.0) -> Command | None:
+def report(
+    sequencer: Sequencer, conditions: frozenset[Condition], now: float = 0.0
+) -> Command | None:
     """Send a State at now that echoes the command in force."""
-    return sequencer.on_state(StateReading(codes, echo=sequencer.command.round_to_float32()), now)
+    return sequencer.on_state(
+        StateReading(conditions, echo=sequencer.command.round_to_float32()), now
+    )
 
 
-NO_CODES: frozenset[Code] = frozenset()
-FAULT = frozenset({Code.FAULT_COGNIZANT})
+NO_CONDITIONS: frozenset[Condition] = frozenset()
+FAULT = frozenset({Condition.FAULT_COGNIZANT})
 
 
 def moving(x: float, y: float, theta: float) -> OdometryReading:
@@ -70,25 +81,25 @@ def test_the_command_in_force_is_the_one_of_the_running_step(sequencer):
 
 def test_a_code_activated_in_the_first_step_aborts(sequencer):
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))
-    assert report(sequencer, NO_CODES) is None
+    assert report(sequencer, NO_CONDITIONS) is None
 
     assert report(sequencer, FAULT) == STOP
     assert sequencer.status is MissionStatus.ABORTED
     assert sequencer.command == STOP
 
 
-def test_the_codes_behind_an_abort_are_given_once(sequencer):
+def test_the_conditions_behind_an_abort_are_given_once(sequencer):
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))
     report(sequencer, FAULT)
 
-    assert sequencer.pop_reaction_codes() == FAULT
-    assert sequencer.pop_reaction_codes() == NO_CODES
+    assert sequencer.pop_reaction_conditions() == FAULT
+    assert sequencer.pop_reaction_conditions() == NO_CONDITIONS
 
 
 def test_a_reflex_activated_also_aborts(sequencer):
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))
 
-    assert report(sequencer, frozenset({Code.REFLEX_FRONT_OBSTACLE})) == STOP
+    assert report(sequencer, frozenset({Condition.REFLEX_FRONT_OBSTACLE})) == STOP
 
 
 def test_a_code_active_before_the_mission_counts_as_activated_when_it_begins(sequencer):
@@ -103,6 +114,6 @@ def test_after_the_end_nothing_restarts_the_mission(sequencer):
     report(sequencer, FAULT)
 
     assert sequencer.on_odometry(moving(1.0, 0.0, 0.0)) is None
-    assert report(sequencer, NO_CODES) is None
+    assert report(sequencer, NO_CONDITIONS) is None
     assert report(sequencer, FAULT) is None
     assert sequencer.status is MissionStatus.ABORTED

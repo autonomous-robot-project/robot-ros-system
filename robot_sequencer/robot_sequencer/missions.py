@@ -31,7 +31,7 @@ Mission by plan (V-04): one pair TURN_TO(heading to the vertex) -> GO_TO(vertex)
 the plan (ADRs 015, 024 and 034), the vertices in map (ADR 035). Table of ADR 038, with abort
 where its ladder is not implemented (a debt of V-09):
 
-| Code | TURN_TO | GO_TO |
+| Condition | TURN_TO | GO_TO |
 | Front obstacle, front sensor fault | ignore | abort (ADR 038: ladder of wait_until_clear) |
 | Deadline missed | ignore | ignore |
 | Any other code | abort | abort |
@@ -42,7 +42,7 @@ import math
 
 from robot_sequencer.geometry import Point
 from robot_sequencer.mission import (
-    Code,
+    Condition,
     DistanceFromStart,
     GoTo,
     HeadingTo,
@@ -59,7 +59,7 @@ from robot_sequencer.mission import (
 )
 
 # The missions of the verifications run without the heartbeat of the notebook (ADR 038).
-WITHOUT_NOTEBOOK = {Code.HEARTBEAT_LOST: Ignore()}
+WITHOUT_NOTEBOOK = {Condition.HEARTBEAT_LOST: Ignore()}
 
 # Parameters of V-01.
 V_1: float = 0.2  # m/s, v₁: d₁ / v₁ = 5 s, time to lock a wheel by hand during S1
@@ -89,15 +89,15 @@ def build_v07_mission() -> Mission:
         steps=[Step(Twist(V_R, 0.0), until=Never())],
         reactions={
             **WITHOUT_NOTEBOOK,
-            Code.FAULT_TEST: Recover([wait_until_clear(Code.FAULT_TEST)]),
+            Condition.FAULT_TEST: Recover([wait_until_clear(Condition.FAULT_TEST)]),
         },
     )
 
 
 # The front reflex and the fault of its sensor allow a turn in place (ADR 021).
 TURN_IN_PLACE_REACTIONS = {
-    Code.REFLEX_FRONT_OBSTACLE: Ignore(),
-    Code.FAULT_FRONT_SENSOR: Ignore(),
+    Condition.REFLEX_FRONT_OBSTACLE: Ignore(),
+    Condition.FAULT_FRONT_SENSOR: Ignore(),
 }
 
 
@@ -108,12 +108,12 @@ def build_plan_mission(vertices: Sequence[Point]) -> Mission:
         target = MapPoint(vertex)
         steps.append(Step(TurnTo(HeadingTo(target)), reactions=TURN_IN_PLACE_REACTIONS))
         steps.append(Step(GoTo(target)))
-    return Mission(steps, reactions={Code.FAULT_DEADLINE_MISSED: Ignore()})
+    return Mission(steps, reactions={Condition.FAULT_DEADLINE_MISSED: Ignore()})
 
 
 def build_v08_mission() -> Mission:
     v07 = build_v07_mission()
-    under_load = {Code.LINK_LOST: Ignore(), Code.COMMAND_NOT_ECHOED: Ignore()}
+    under_load = {Condition.LINK_LOST: Ignore(), Condition.COMMAND_NOT_ECHOED: Ignore()}
     return Mission(v07.steps, reactions={**v07.reactions, **under_load})
 
 

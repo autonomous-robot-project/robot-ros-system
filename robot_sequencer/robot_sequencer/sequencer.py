@@ -43,8 +43,8 @@ from robot_sequencer.mission import (
     STOP,
     Abort,
     Cleared,
-    Code,
     Command,
+    Condition,
     HeadingReached,
     MapToOdom,
     MissingTransformError,
@@ -97,9 +97,9 @@ class RunningStep:
             return False
         return termination.is_met(self.start, self.command, reading)
 
-    def is_done_by_codes(self, active_codes: frozenset[Code]) -> bool:
+    def is_done_by_conditions(self, active_conditions: frozenset[Condition]) -> bool:
         termination = self.step.termination
-        return isinstance(termination, Cleared) and termination.code not in active_codes
+        return isinstance(termination, Cleared) and termination.condition not in active_conditions
 
 
 class Sequencer:
@@ -114,13 +114,13 @@ class Sequencer:
         self._status = MissionStatus.IDLE if mission is None else MissionStatus.WAITING
         self._running: RunningStep | None = None
         self._recovery: list[Step] = []  # steps of a recover still to run
-        self._seen_codes: frozenset[Code] = frozenset()
+        self._seen_conditions: frozenset[Condition] = frozenset()
         self._pose: Pose | None = None
-        self._controller_codes: frozenset[Code] = frozenset()  # of the latest State
+        self._controller_conditions: frozenset[Condition] = frozenset()  # of the latest State
         self._last_state_s: float | None = None
         self._last_heartbeat_s: float | None = None
         self._echo_differs_since_s: float | None = None
-        self._reaction_codes: frozenset[Code] = frozenset()  # behind the latest reaction
+        self._reaction_conditions: frozenset[Condition] = frozenset()  # behind the latest reaction
 
     @property
     def status(self) -> MissionStatus:
@@ -142,23 +142,23 @@ class Sequencer:
         if running.is_done_by_reading(reading):
             return self._end_step(running)
         if running.has_stalled(reading):
-            return self._react_to(running, frozenset({Code.NO_PROGRESS}))
+            return self._react_to(running, frozenset({Condition.NO_PROGRESS}))
         running.was_moving = not reading.is_at_rest
         return None
 
     def on_state(self, state: StateReading, now: float) -> Command | None:
         """Return the new command if a code was activated or cleared and the step changes."""
         if self._is_link_lost(now):
-            self._seen_codes = frozenset()  # the link is back (ADR 037)
+            self._seen_conditions = frozenset()  # the link is back (ADR 037)
         self._last_state_s = now
-        self._controller_codes = state.codes
+        self._controller_conditions = state.conditions
         self._track_echo(state.echo, now)
-        return self._update_codes(now)
+        return self._update_conditions(now)
 
-    def pop_reaction_codes(self) -> frozenset[Code]:
+    def pop_reaction_conditions(self) -> frozenset[Condition]:
         """Return the codes behind the latest abort or recover, once, for the log (#51)."""
-        codes, self._reaction_codes = self._reaction_codes, frozenset()
-        return codes
+        conditions, self._reaction_conditions = self._reaction_conditions, frozenset()
+        return conditions
 
     def wait_for_plan(self) -> Command:
         """Preempt the mission for a new goal: TWIST(0, 0) until its plan arrives."""
@@ -180,31 +180,31 @@ class Sequencer:
 
     def on_timer(self, now: float) -> Command | None:
         """Return the new command if the age of the State or of the heartbeat activates a code."""
-        return self._update_codes(now)
+        return self._update_conditions(now)
 
-    def _update_codes(self, now: float) -> Command | None:
+    def _update_conditions(self, now: float) -> Command | None:
         if self._running is None:
             return None
-        active_codes = self._controller_codes | self._get_own_codes(now)
-        activated = active_codes - self._seen_codes
-        self._seen_codes = active_codes
+        active_conditions = self._controller_conditions | self._get_own_conditions(now)
+        activated = active_conditions - self._seen_conditions
+        self._seen_conditions = active_conditions
         reaction = self._react_to(self._running, activated)
         if reaction is not None:
             return reaction
-        if self._running.is_done_by_codes(active_codes):
+        if self._running.is_done_by_conditions(active_conditions):
             return self._end_step(self._running)
         return None
 
-    def _get_own_codes(self, now: float) -> frozenset[Code]:
-        codes: set[Code] = set()
+    def _get_own_conditions(self, now: float) -> frozenset[Condition]:
+        conditions: set[Condition] = set()
         if self._echo_differs_since_s is not None:
             if now - self._echo_differs_since_s > ECHO_TIMEOUT_S:
-                codes.add(Code.COMMAND_NOT_ECHOED)
+                conditions.add(Condition.COMMAND_NOT_ECHOED)
         if self._is_link_lost(now):
-            codes.add(Code.LINK_LOST)
+            conditions.add(Condition.LINK_LOST)
         if self._last_heartbeat_s is None or now - self._last_heartbeat_s > HEARTBEAT_TIMEOUT_S:
-            codes.add(Code.HEARTBEAT_LOST)
-        return frozenset(codes)
+            conditions.add(Condition.HEARTBEAT_LOST)
+        return frozenset(conditions)
 
     def _is_link_lost(self, now: float) -> bool:
         return self._last_state_s is not None and now - self._last_state_s > LINK_TIMEOUT_S
@@ -216,18 +216,23 @@ class Sequencer:
         elif self._echo_differs_since_s is None:
             self._echo_differs_since_s = now
 
-    def _react_to(self, running: RunningStep, activated: frozenset[Code]) -> Command | None:
-        reactions = {code: self._mission.get_reaction(running.step, code) for code in activated}
+    def _react_to(self, running: RunningStep, activated: frozenset[Condition]) -> Command | None:
+        reactions = {
+            condition: self._mission.get_reaction(running.step, condition)
+            for condition in activated
+        }
         aborts = frozenset(
-            code for code, reaction in reactions.items() if isinstance(reaction, Abort)
+            condition for condition, reaction in reactions.items() if isinstance(reaction, Abort)
         )
         if aborts:
-            self._reaction_codes = aborts
+            self._reaction_conditions = aborts
             return self._finish(MissionStatus.ABORTED)
         recovers = [reaction for reaction in reactions.values() if isinstance(reaction, Recover)]
         if recovers:
-            self._reaction_codes = frozenset(
-                code for code, reaction in reactions.items() if isinstance(reaction, Recover)
+            self._reaction_conditions = frozenset(
+                condition
+                for condition, reaction in reactions.items()
+                if isinstance(reaction, Recover)
             )
             self._recovery = list(recovers[0].steps)
             return self._enter_step(running.index)
@@ -265,7 +270,7 @@ class Sequencer:
             is_recovery,
             is_partial_turn=command != target_command,
         )
-        self._seen_codes = frozenset()
+        self._seen_conditions = frozenset()
         self._status = MissionStatus.RUNNING
         return command
 

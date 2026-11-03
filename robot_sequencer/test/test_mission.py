@@ -8,8 +8,8 @@ from robot_sequencer.mission import (
     Abort,
     Behavior,
     Cleared,
-    Code,
     Command,
+    Condition,
     DistanceFromStart,
     GoTo,
     HeadingReached,
@@ -161,30 +161,30 @@ def test_never_is_never_met():
 
 
 def test_wait_until_clear_holds_twist_zero_and_ignores_its_own_code():
-    step = wait_until_clear(Code.FAULT_TEST)
+    step = wait_until_clear(Condition.FAULT_TEST)
 
     assert step.behavior == Twist(0.0, 0.0)
-    assert step.termination == Cleared(Code.FAULT_TEST)
-    assert step.reactions == {Code.FAULT_TEST: Ignore()}
+    assert step.termination == Cleared(Condition.FAULT_TEST)
+    assert step.reactions == {Condition.FAULT_TEST: Ignore()}
 
 
 def test_the_reaction_of_the_step_comes_before_the_one_of_the_mission():
-    step = Step(Twist(0.2, 0.0), until=Never(), reactions={Code.FAULT_TEST: Ignore()})
-    recover = Recover([wait_until_clear(Code.FAULT_TEST)])
-    mission = Mission(steps=[step], reactions={Code.FAULT_TEST: recover})
+    step = Step(Twist(0.2, 0.0), until=Never(), reactions={Condition.FAULT_TEST: Ignore()})
+    recover = Recover([wait_until_clear(Condition.FAULT_TEST)])
+    mission = Mission(steps=[step], reactions={Condition.FAULT_TEST: recover})
 
-    assert mission.get_reaction(step, Code.FAULT_TEST) == Ignore()
+    assert mission.get_reaction(step, Condition.FAULT_TEST) == Ignore()
 
 
 def test_the_reaction_of_the_mission_applies_when_the_step_has_none():
     step = Step(Twist(0.2, 0.0), until=Never())
-    recover = Recover([wait_until_clear(Code.FAULT_TEST)])
-    mission = Mission(steps=[step], reactions={Code.FAULT_TEST: recover})
+    recover = Recover([wait_until_clear(Condition.FAULT_TEST)])
+    mission = Mission(steps=[step], reactions={Condition.FAULT_TEST: recover})
 
-    assert mission.get_reaction(step, Code.FAULT_TEST) == recover
+    assert mission.get_reaction(step, Condition.FAULT_TEST) == recover
 
 
 def test_a_code_in_no_table_aborts():
     step = Step(Twist(0.2, 0.0), until=Never())
 
-    assert Mission(steps=[step]).get_reaction(step, Code.FAULT_COGNIZANT) == Abort()
+    assert Mission(steps=[step]).get_reaction(step, Condition.FAULT_COGNIZANT) == Abort()

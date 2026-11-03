@@ -8,8 +8,8 @@ from robot_sequencer.mission import (
     STOP,
     THETA_MAX,
     Behavior,
-    Code,
     Command,
+    Condition,
     Ignore,
     Mission,
     OdometryReading,
@@ -99,7 +99,7 @@ def test_twist_to_a_distance_has_no_tolerance_and_no_stall():
 
 def test_ignored_no_progress_is_raised_once_per_stop():
     plan = build_plan_mission([Point(1.0, 0.0)])
-    mission = Mission(plan.steps, reactions={Code.NO_PROGRESS: Ignore()})
+    mission = Mission(plan.steps, reactions={Condition.NO_PROGRESS: Ignore()})
     sequencer = build_plan_sequencer(mission)
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # TURN_TO
     sequencer.on_odometry(at_rest(0.0, 0.0, 0.0))  # GO_TO
