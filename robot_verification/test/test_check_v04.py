@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 from robot_verification.check_v04 import (
     GO_TO,
+    MAP_RESOLUTION,
     P_G,
-    RESOLUTION,
     TURN_TO,
     TWIST,
     V04,
@@ -48,7 +48,7 @@ def densify(raw: list[tuple[float, float]]) -> list[tuple[float, float]]:
     """Return the raw vertices with points every res between them, as Theta* interpolates."""
     points = [raw[0]]
     for start, end in zip(raw, raw[1:], strict=False):
-        count = max(1, math.ceil(math.dist(start, end) / RESOLUTION))
+        count = max(1, math.ceil(math.dist(start, end) / MAP_RESOLUTION))
         points += [
             (
                 start[0] + (end[0] - start[0]) * k / count,

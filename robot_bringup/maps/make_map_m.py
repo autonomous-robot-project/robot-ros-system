@@ -15,7 +15,7 @@ Criticality: T2, product (robot-docs codigo.md).
 from pathlib import Path
 
 MAP_SIZE = 3.0  # m, side of the square map (V-04, M)
-RESOLUTION = 0.05  # m per cell (V-04, M; ADR 041)
+MAP_RESOLUTION = 0.05  # m per cell, res (V-04; ADR 041)
 # Map frame position of the lower-left corner: p0 = (0, 0) lies 0.5 m inside the map
 MAP_ORIGIN = (-0.5, -0.5)  # m
 WALL_X = (0.5, 0.6)  # m (V-04, M)
@@ -33,8 +33,8 @@ def is_inside_wall(x: float, y: float) -> bool:
 
 def get_cell_centre(row: int, col: int, cells: int) -> tuple[float, float]:
     """Map frame centre of a cell; PGM row 0 is the top of the map."""
-    x = MAP_ORIGIN[0] + (col + 0.5) * RESOLUTION
-    y = MAP_ORIGIN[1] + (cells - 1 - row + 0.5) * RESOLUTION
+    x = MAP_ORIGIN[0] + (col + 0.5) * MAP_RESOLUTION
+    y = MAP_ORIGIN[1] + (cells - 1 - row + 0.5) * MAP_RESOLUTION
     return x, y
 
 
@@ -54,7 +54,7 @@ def build_metadata() -> str:
     return (
         f'image: {IMAGE_NAME}\n'
         'mode: trinary\n'
-        f'resolution: {RESOLUTION}\n'
+        f'resolution: {MAP_RESOLUTION}\n'
         f'origin: [{MAP_ORIGIN[0]}, {MAP_ORIGIN[1]}, 0.0]\n'
         'negate: 0\n'
         'occupied_thresh: 0.65\n'
@@ -63,7 +63,7 @@ def build_metadata() -> str:
 
 
 def main() -> None:
-    cells = round(MAP_SIZE / RESOLUTION)
+    cells = round(MAP_SIZE / MAP_RESOLUTION)
     image = build_image(cells)
     here = Path(__file__).parent
     (here / IMAGE_NAME).write_bytes(build_pgm(cells, image))

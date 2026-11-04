@@ -57,7 +57,7 @@ TF_STATIC_TOPIC = '/tf_static'
 P_0: tuple[float, float] = (0.0, 0.0)  # initial pose, the origin
 P_G: tuple[float, float] = (2.0, 2.0)  # goal
 EPSILON_G: float = 0.05  # m, ε_g = ε_d, the termination tolerance of the GO_TO
-RESOLUTION: float = 0.05  # m, res of M
+MAP_RESOLUTION: float = 0.05  # m, res of M (V-04)
 MIN_SEGMENTS: int = 2  # the plan has a turn
 
 # Rule of ADR 034.
@@ -67,8 +67,8 @@ COLLINEAR_TOLERANCE_RAD: float = 1e-3
 # A vertex in a cell next to the goal cell: one cell away, also diagonally.
 # m, the centres of the cells carry the float32 rounding of the planner (~1e-7 m at 2 m).
 CELL_CENTRE_MARGIN: float = 1e-6
-NEIGHBOUR_DISTANCE: float = RESOLUTION * math.sqrt(2) + CELL_CENTRE_MARGIN
-MAX_ABSORPTION_DEVIATION: float = RESOLUTION / 2  # res/2
+NEIGHBOUR_DISTANCE: float = MAP_RESOLUTION * math.sqrt(2) + CELL_CENTRE_MARGIN
+MAX_ABSORPTION_DEVIATION: float = MAP_RESOLUTION / 2  # res/2
 
 # Comparison of a target in the echo (float32, in odom) with a vertex (in map): well below res and
 # far above the float32 rounding at 2 m (2.4e-7 m).
