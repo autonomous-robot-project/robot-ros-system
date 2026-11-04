@@ -51,7 +51,7 @@ def test_offset_is_resolved_once_from_the_first_pose():
 
 
 def test_heading_to_the_offset_at_its_pose_is_the_heading_plus_the_turn():
-    # V-01: θ₁ = heading at the end of S1 + π/2.
+    # V-01: θ₁ = heading at the end of S1 + Δθ₁.
     end_of_twist = Pose(Point(1.0, 0.0), 0.3)
     corner = Offset(turn=math.pi / 2, distance=0.5)
 

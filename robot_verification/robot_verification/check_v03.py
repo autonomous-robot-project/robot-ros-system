@@ -59,7 +59,7 @@ EXPECTED_SCREENS: int = 3
 T_C_S: float = 0.010
 T_RANGING_S: float = 0.033  # one ranging of the VL53L0X
 A_DEC: float = 0.5  # m/s²
-A_ACCEL: float = 0.25  # m/s²
+A_ACEL: float = 0.25  # m/s²
 V_MIN: float = 0.07  # m/s, below it the PI brakes
 BRAKE_S: float = 0.05  # from v_min to the wheel stopped
 T_VEL_S: float = 0.3  # no edge for T_vel reads as speed zero
@@ -79,7 +79,7 @@ T_SETTLE_S: float = OPERATOR_REACTION_S + SENSOR_LATENCY_S + STOP_S + REPORT_DEL
 
 # T_resume: from "removed" to the measured speed back at v_r in the bag: the ramp up, then the
 # settling of the wheel loop.
-RAMP_UP_S: float = V_R / A_ACCEL
+RAMP_UP_S: float = V_R / A_ACEL
 T_RESUME_S: float = (
     OPERATOR_REACTION_S + SENSOR_LATENCY_S + RAMP_UP_S + WHEEL_SETTLING_S + REPORT_DELAY_S
 )

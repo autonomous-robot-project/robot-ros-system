@@ -26,8 +26,8 @@ if TYPE_CHECKING:
     from nav_msgs.msg import Odometry
     from robot_interfaces.msg import Command, Instrumentation, State
 
-# A wheel read faster than this ran away: above v_max + omega_max b/2 = 0.4 m/s with margin for the
-# ramp, and above the 0.15 m/s of the reversals.
+# A wheel read faster than this ran away: above v_max + ω_max L_rodas/2 = 0.4 m/s with margin
+# for the ramp, and above the 0.15 m/s of the reversals.
 RUNAWAY_SPEED: float = 0.3  # m/s
 EPISODE_GAP_S: float = 1.0  # readings farther apart are separate episodes
 # The reverse phase of reversal_bench and behaviors_series; both wheels are expected negative from
