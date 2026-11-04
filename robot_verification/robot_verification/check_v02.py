@@ -45,7 +45,9 @@ V_R = 0.2  # m/s, commanded in the trial
 E_F = 0.5
 T_F_S = 1.0  # 2 x t_s of design
 T_C_S = 0.010
-WHEEL_TRAVEL_PER_EDGE = math.pi * 0.065 / 20  # s (m)
+WHEEL_DIAMETER_M = 0.065  # D
+ENCODER_SLOTS = 20  # N, rising edges per turn
+WHEEL_TRAVEL_PER_EDGE = math.pi * WHEEL_DIAMETER_M / ENCODER_SLOTS  # s (m)
 T_STAR_S = WHEEL_TRAVEL_PER_EDGE / ((1 - E_F) * V_R)  # stopped wheel reads below (1 - e_f) v_r
 DETECTION_LATENCY_S = T_STAR_S + T_F_S + T_C_S  # V-02 step 8, plus one cycle
 
