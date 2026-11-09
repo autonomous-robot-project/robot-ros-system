@@ -90,7 +90,7 @@ E_R: float = 0.03  # m/s
 STEADY_BEFORE_S: float = 1.0  # window before each placement where the robot must be moving
 MAX_STATE_GAP_S: float = 0.1  # longer is a hole in the recording
 # Fewest Odometry samples in a judged window: 0.5 s at 20 Hz, two thirds of the shortest window
-# (zero while screened, T_o - T_settle = 0.75 s).
+# (zero while screened, t_o - T_settle = 0.75 s).
 MIN_WINDOW_SAMPLES: int = 10
 
 # Codes of State.msg, checked against the generated message when a bag is read.
