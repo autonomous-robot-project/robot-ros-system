@@ -471,17 +471,16 @@ def plot_screens(evidence: Path) -> None:
     origin_s = odometry[0].time_s
     figure, axes, codes = build_time_figure()
     screens = [Interval(window.placed_s, window.removed_s) for window in run.windows]
-    shade_intervals(axes, screens, origin_s, 'anteparo a 0,10 m do sensor')
+    shade_intervals(axes, screens, origin_s, 'anteparo, entre os anúncios de colocação e retirada')
     speeds = [get_linear_speed(sample) for sample in odometry]
     axes.plot(
         [sample.time_s - origin_s for sample in odometry],
         speeds,
         color=SERIES[0],
         linewidth=1.2,
-        label='velocidade linear (odometria)',
+        label='velocidade linear (Odometry)',
     )
-    axes.axhline(V_R, color=MUTED, linewidth=1)
-    axes.text(odometry[-1].time_s - origin_s, V_R, ' $v_r$', color=INK, va='center', fontsize=9)
+    axes.axhline(V_R, color=MUTED, linewidth=1, label='$v_\\mathrm{r}$ = 0,2 m/s')
     states = list(run.recording.states)
     draw_code_rows(
         codes,
@@ -497,7 +496,7 @@ def plot_screens(evidence: Path) -> None:
     axes.set_ylim(-0.02, max(speeds) * 1.08)
     axes.set_ylabel('Velocidade (m/s)')
     codes.set_xlabel('Tempo (s)')
-    axes.legend(loc='upper center', bbox_to_anchor=(0.5, 1.2), ncol=2, frameon=False, fontsize=8)
+    axes.legend(loc='upper center', bbox_to_anchor=(0.5, 1.32), ncol=2, frameon=False, fontsize=8)
     save(figure, folder, 'fig_v03_reflexo')
 
 
