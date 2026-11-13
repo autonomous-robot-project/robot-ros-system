@@ -78,8 +78,10 @@ def style_axes(axes: Axes) -> None:
     axes.yaxis.set_major_formatter(FuncFormatter(format_decimal))
 
 
-def save(figure: Figure, folder: Path, name: str) -> None:
-    figure.tight_layout()
+def save(
+    figure: Figure, folder: Path, name: str, layout_rect: tuple[float, ...] = (0, 0, 1, 1)
+) -> None:
+    figure.tight_layout(rect=layout_rect)
     for suffix in ('pdf', 'png'):
         figure.savefig(folder / f'{name}.{suffix}', dpi=200, facecolor='white')
     plt.close(figure)
@@ -174,7 +176,7 @@ def draw_mission_bar(axes: Axes, recording: ControllerRecording, origin_s: float
 def plot_behavior_selection(evidence: Path) -> None:
     """V-01: the sequence S1..S4 in the nominal run, and S4 right after the fault in S1."""
     folder = evidence / 'V-01' / FINAL
-    figure, panels = plt.subplots(2, 1, figsize=(WIDTH_IN, 2.8))
+    figure, panels = plt.subplots(2, 1, figsize=(WIDTH_IN, 3.1))
     runs = (('Execução nominal', 'nominal'), ('Execução com a roda travada no S1', 'falha'))
     for axes, (title, name) in zip(panels, runs, strict=True):
         style_axes(axes)
@@ -196,9 +198,12 @@ def plot_behavior_selection(evidence: Path) -> None:
         plt.matplotlib.patches.Patch(color=color, label=label)
         for color, label in zip([*SERIES, SHADE], [*BEHAVIOR_NAMES, 'TWIST(0, 0)'], strict=True)
     ]
-    panels[-1].legend(handles=handles, loc='lower right', ncol=4, frameon=False, fontsize=7)
+    handles.append(
+        plt.matplotlib.patches.Patch(color=STATUS_CRITICAL, label='FAULT_COGNIZANT ativo')
+    )
+    figure.legend(handles=handles, loc='lower center', ncol=5, frameon=False, fontsize=7)
     panels[-1].set_xlabel('Tempo desde o início do S1 (s)')
-    save(figure, folder, 'fig_v01_selecao')
+    save(figure, folder, 'fig_v01_selecao', layout_rect=(0, 0.08, 1, 1))  # legend below the panels
 
 
 def plot_response_times(evidence: Path) -> None:
