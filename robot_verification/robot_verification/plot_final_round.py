@@ -6,9 +6,10 @@ Criticality: T2, product (robot-docs codigo.md).
 One figure per verification, each showing what its criterion judges, read from the bags by the
 same classes as the checks: the response time Δ of V-07 under C0, C1 and C2 of V-08 against
 T_seq; the expiry delay of each interruption of V-06 against T_cmd; the wheel speeds and the
-cognizant fault around the power cuts of V-02; the speed and the front reflex around the screens
-of V-03; the plan over M and the path of the odometry in V-04. The numbers and the verdicts come
-from the checks; the figures only show them.
+cognizant fault around the power cuts of V-02; the stages sent and echoed in each execution of
+V-01, with a zoom on the echo of each change against the State period; the speed and the
+front reflex around the screens of V-03; the plan over M and the path of the odometry in V-04.
+The numbers and the verdicts come from the checks; the figures only show them.
 
 Usage: plot_final_round <evidencias directory>. Writes fig_*.pdf and fig_*.png into the
 2026-11-02_final folders of each verification.
@@ -19,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
 
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -26,6 +28,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import numpy as np
 
+from robot_verification.check_v01 import Execution
 from robot_verification.check_v02 import FAULT_COGNIZANT, FAULT_WATCHDOG_RESTART, V_R, Recording
 from robot_verification.check_v03 import REFLEX_FRONT_OBSTACLE, ScreenRun, get_linear_speed
 from robot_verification.check_v04 import PlanRun
@@ -35,9 +38,10 @@ from robot_verification.recording import (
     BEHAVIOR_NAMES,
     ControllerRecording,
     Sample,
-    find_changes,
-    get_command_key,
 )
+
+if TYPE_CHECKING:
+    from robot_interfaces.msg import Command
 
 FINAL = '2026-11-02_final'
 
@@ -153,57 +157,197 @@ def is_stop(command) -> bool:
     return command.behavior == 0 and command.linear == 0.0 and command.angular == 0.0
 
 
-def get_mission_steps(recording: ControllerRecording) -> list[Sample]:
-    """Return the changes of the command from the first that is not the idle TWIST(0, 0)."""
-    changes = find_changes(recording.commands, get_command_key)
-    first = next(index for index, change in enumerate(changes) if not is_stop(change.message))
-    return changes[first:]
+@dataclass
+class Segment:
+    """A stretch of time in which one command of the mission was in force, sent or echoed."""
+
+    start_s: float
+    end_s: float
+    command: Command
+    label: str
 
 
-def draw_mission_bar(axes: Axes, recording: ControllerRecording, origin_s: float) -> None:
-    """Draw each step of the mission as a segment colored by its behavior, labeled S1, S2..."""
-    steps = get_mission_steps(recording)
-    end_s = recording.states[len(recording.states) - 1].time_s
-    ends = [step.time_s for step in steps[1:]] + [end_s]
-    for number, (step, step_end_s) in enumerate(zip(steps, ends, strict=True), start=1):
-        color = SHADE if is_stop(step.message) else SERIES[step.message.behavior]
-        start = step.time_s - origin_s
-        axes.broken_barh([(start, step_end_s - step.time_s)], (0.7, 0.6), color=color, linewidth=0)
-        label = 'S4' if is_stop(step.message) else f'S{number}'  # S4 ends every mission (V-01)
-        axes.text(start + 0.1, 1.0, label, color=INK, va='center', fontsize=8)
+def get_stage_label(number: int, command: Command) -> str:
+    return 'S4' if is_stop(command) else f'S{number}'  # S4 ends every mission (V-01)
+
+
+def get_sent_segments(execution: Execution) -> list[Segment]:
+    """Return each command of the mission from its change to the next one, labeled S1, S2..."""
+    changes = execution.get_command_changes()
+    ends = [change.time_s for change in changes[1:]] + [
+        execution.recording.states[len(execution.recording.states) - 1].time_s
+    ]
+    return [
+        Segment(change.time_s, end_s, change.message, get_stage_label(number, change.message))
+        for number, (change, end_s) in enumerate(zip(changes, ends, strict=True), start=1)
+    ]
+
+
+def get_echoed_segments(execution: Execution) -> list[Segment]:
+    """Return each command from the first State that echoes it to the next echo.
+
+    The echo matches the behavior and every parameter, with the same test as check_v01.
+    """
+    sent = get_sent_segments(execution)
+    echoes = [execution.find_echo(index) for index in range(len(sent))]
+    starts = [echo.time_s for echo in echoes if echo is not None]
+    ends = starts[1:] + [execution.recording.states[len(execution.recording.states) - 1].time_s]
+    echoed = [segment for segment, echo in zip(sent, echoes, strict=True) if echo is not None]
+    return [
+        Segment(start_s, end_s, segment.command, segment.label)
+        for start_s, end_s, segment in zip(starts, ends, echoed, strict=True)
+    ]
+
+
+def get_behavior_color(command: Command) -> str:
+    return SHADE if is_stop(command) else SERIES[command.behavior]
+
+
+def draw_segments(axes: Axes, segments: list[Segment], origin_s: float, row: float) -> None:
+    """Draw each segment on the row, colored by its behavior and labeled with its stage."""
+    for segment in segments:
+        start = segment.start_s - origin_s
+        axes.broken_barh(
+            [(start, segment.end_s - segment.start_s)],
+            (row - 0.3, 0.6),
+            color=get_behavior_color(segment.command),
+            linewidth=0,
+        )
+        axes.text(start + 0.1, row, segment.label, color=INK, va='center', fontsize=8)
+
+
+def draw_fault_row(axes: Axes, execution: Execution, origin_s: float, row: float) -> None:
+    states = list(execution.recording.states)
+    faults = find_intervals(states, lambda s: bool(s.message.faults & FAULT_COGNIZANT))
+    spans = [(f.start_s - origin_s, f.end_s - f.start_s) for f in faults]
+    axes.broken_barh(spans, (row - 0.3, 0.6), color=STATUS_CRITICAL, linewidth=0)
+
+
+def draw_full_scale(axes: Axes, execution: Execution, origin_s: float, title: str) -> None:
+    """Draw the stages sent, the stages echoed in the State and the cognizant fault."""
+    style_axes(axes)
+    axes.grid(axis='y', visible=False)
+    draw_segments(axes, get_sent_segments(execution), origin_s, row=2)
+    draw_segments(axes, get_echoed_segments(execution), origin_s, row=1)
+    draw_fault_row(axes, execution, origin_s, row=0)
+    axes.set_yticks([0, 1, 2], ['FAULT_COGNIZANT', 'relatado no State', 'comando'], fontsize=8)
+    axes.tick_params(axis='y', length=0)
+    axes.set_ylim(-0.5, 2.5)
+    axes.set_xlim(-0.2, 13)
+    axes.set_xlabel('Tempo desde o início do S1 (s)', fontsize=8)
+    axes.set_title(title, loc='left', fontsize=9, color=INK)
+
+
+ECHO_WINDOW_MS = (-15.0, 25.0)  # around each change: about two State periods (100 Hz) each side
+
+
+def draw_echo_zoom(
+    axes: Axes, execution: Execution, index: int, segment: Segment, row: int
+) -> None:
+    """Draw, around one change, the State samples, the first echo and any fault activation."""
+    start_s = segment.start_s + ECHO_WINDOW_MS[0] / 1e3
+    end_s = segment.start_s + ECHO_WINDOW_MS[1] / 1e3
+    states = execution.recording.states.between(start_s, end_s)
+    sample_ms = [(state.time_s - segment.start_s) * 1e3 for state in states]
+    axes.plot(
+        sample_ms,
+        [row] * len(sample_ms),
+        '|',
+        color=MUTED,
+        markersize=8,
+    )
+    echo = execution.find_echo(index)
+    if echo is not None:
+        axes.plot(
+            (echo.time_s - segment.start_s) * 1e3,
+            row,
+            'o',
+            markersize=6,
+            color=get_behavior_color(segment.command),
+            markeredgecolor=MUTED,  # TWIST(0, 0) is light gray on the surface
+        )
+    activations = [a for a in execution.find_fault_activations() if start_s <= a.time_s <= end_s]
+    for activation in activations:
+        axes.plot(
+            (activation.time_s - segment.start_s) * 1e3,
+            row,
+            'x',
+            markersize=7,
+            color=STATUS_CRITICAL,
+        )
+
+
+def draw_zoom(axes: Axes, execution: Execution) -> None:
+    """Draw one row per change of the command, in milliseconds around the change."""
+    style_axes(axes)
+    segments = get_sent_segments(execution)
+    for index, segment in enumerate(segments):
+        draw_echo_zoom(axes, execution, index, segment, row=index)
+    axes.axvline(0, color=INK, linewidth=1, linestyle='--')
+    axes.set_yticks(range(len(segments)), [segment.label for segment in segments], fontsize=8)
+    axes.set_ylim(len(segments) - 0.5, -0.5)
+    axes.set_xlim(*ECHO_WINDOW_MS)
+    axes.set_xlabel('Tempo desde a troca do comando (ms)', fontsize=8)
+    axes.set_ylabel('Troca para', fontsize=8)
+
+
+def build_legend_handles() -> list:
+    """Return the behaviors and the fault span, then the markers of the zoom."""
+    patch, line = plt.matplotlib.patches.Patch, plt.matplotlib.lines.Line2D
+    behaviors = zip([*SERIES, SHADE], [*BEHAVIOR_NAMES, 'TWIST(0, 0)'], strict=True)
+    return [
+        *(patch(color=color, label=label) for color, label in behaviors),
+        patch(color=STATUS_CRITICAL, label='FAULT_COGNIZANT ativo'),
+        line([], [], color=INK, linewidth=1, linestyle='--', label='troca do comando'),
+        line(
+            [], [], marker='|', linestyle='', color=MUTED, markersize=8, label='amostra do State'
+        ),
+        line(
+            [],
+            [],
+            marker='o',
+            linestyle='',
+            color=MUTED,
+            markersize=6,
+            label='primeiro State com o eco (cor do comportamento)',
+        ),
+        line(
+            [],
+            [],
+            marker='x',
+            linestyle='',
+            color=STATUS_CRITICAL,
+            markersize=7,
+            label='ativação do FAULT_COGNIZANT',
+        ),
+    ]
+
+
+def plot_execution(folder: Path, name: str, title: str) -> None:
+    """V-01, one execution: the stages at full scale and a zoom on the echo of each change."""
+    execution = Execution.from_directory(folder / name)
+    rows = len(execution.get_command_changes())
+    figure, (full, zoom) = plt.subplots(
+        2, 1, figsize=(WIDTH_IN, 3.0 + 0.35 * rows), gridspec_kw={'height_ratios': [3, rows]}
+    )
+    origin_s = get_sent_segments(execution)[0].start_s
+    draw_full_scale(full, execution, origin_s, title)
+    draw_zoom(zoom, execution)
+    figure.legend(
+        handles=build_legend_handles(),
+        loc='lower center',
+        ncol=3,
+        frameon=False,
+        fontsize=7,
+    )
+    save(figure, folder, f'fig_v01_{name}', layout_rect=(0, 0.17, 1, 1))  # legend below
 
 
 def plot_behavior_selection(evidence: Path) -> None:
-    """V-01: the sequence S1..S4 in the nominal run, and S4 right after the fault in S1."""
+    """V-01: one figure for the nominal execution and one for the execution with the fault."""
     folder = evidence / 'V-01' / FINAL
-    figure, panels = plt.subplots(2, 1, figsize=(WIDTH_IN, 3.1))
-    runs = (('Execução nominal', 'nominal'), ('Execução com a roda travada no S1', 'falha'))
-    for axes, (title, name) in zip(panels, runs, strict=True):
-        style_axes(axes)
-        axes.grid(axis='y', visible=False)
-        recording = ControllerRecording.from_bag(str(folder / name / 'bag'))
-        origin_s = get_mission_steps(recording)[0].time_s
-        draw_mission_bar(axes, recording, origin_s)
-        faults = find_intervals(
-            list(recording.states), lambda s: bool(s.message.faults & FAULT_COGNIZANT)
-        )
-        spans = [(f.start_s - origin_s, f.end_s - f.start_s) for f in faults]
-        axes.broken_barh(spans, (-0.3, 0.6), color=STATUS_CRITICAL, linewidth=0)
-        axes.set_yticks([0, 1], ['FAULT_COGNIZANT', 'comando'], fontsize=8)
-        axes.tick_params(axis='y', length=0)
-        axes.set_ylim(-0.5, 1.5)
-        axes.set_xlim(-0.2, 13)
-        axes.set_title(title, loc='left', fontsize=9, color=INK)
-    handles = [
-        plt.matplotlib.patches.Patch(color=color, label=label)
-        for color, label in zip([*SERIES, SHADE], [*BEHAVIOR_NAMES, 'TWIST(0, 0)'], strict=True)
-    ]
-    handles.append(
-        plt.matplotlib.patches.Patch(color=STATUS_CRITICAL, label='FAULT_COGNIZANT ativo')
-    )
-    figure.legend(handles=handles, loc='lower center', ncol=5, frameon=False, fontsize=7)
-    panels[-1].set_xlabel('Tempo desde o início do S1 (s)')
-    save(figure, folder, 'fig_v01_selecao', layout_rect=(0, 0.08, 1, 1))  # legend below the panels
+    plot_execution(folder, 'nominal', 'Execução nominal')
+    plot_execution(folder, 'falha', 'Execução com a roda travada no S1')
 
 
 def plot_response_times(evidence: Path) -> None:
