@@ -6,10 +6,10 @@ Criticality: T2, product (robot-docs codigo.md).
 One figure per verification, each showing what its criterion judges, read from the bags by the
 same classes as the checks: the response time Δ of V-07 under C0, C1 and C2 of V-08 against
 T_seq; the expiry delay of each interruption of V-06 against T_cmd; the wheel speeds and the
-cognizant fault around the power cuts of V-02; the stages sent and echoed in each execution of
-V-01, with a zoom on the echo of each change against the State period; the speed and the
-front reflex around the screens of V-03; the plan over M and the path of the odometry in V-04.
-The numbers and the verdicts come from the checks; the figures only show them.
+cognizant fault around the power cuts of V-02; the stages sent and echoed in both executions of
+V-01, and in a second figure a zoom on the echo of each change against the State period; the
+speed and the front reflex around the screens of V-03; the plan over M and the path of the
+odometry in V-04. The numbers and the verdicts come from the checks; the figures only show them.
 
 Usage: plot_final_round <evidencias directory>. Writes fig_*.pdf and fig_*.png into the
 2026-11-02_final folders of each verification.
@@ -258,14 +258,7 @@ def draw_echo_zoom(
     )
     echo = execution.find_echo(index)
     if echo is not None:
-        axes.plot(
-            (echo.time_s - segment.start_s) * 1e3,
-            row,
-            'o',
-            markersize=6,
-            color=get_behavior_color(segment.command),
-            markeredgecolor=MUTED,  # TWIST(0, 0) is light gray on the surface
-        )
+        axes.plot((echo.time_s - segment.start_s) * 1e3, row, 'o', markersize=6, color=INK)
     activations = [a for a in execution.find_fault_activations() if start_s <= a.time_s <= end_s]
     for activation in activations:
         axes.plot(
@@ -291,13 +284,23 @@ def draw_zoom(axes: Axes, execution: Execution) -> None:
     axes.set_ylabel('Troca para', fontsize=8)
 
 
-def build_legend_handles() -> list:
-    """Return the behaviors and the fault span, then the markers of the zoom."""
-    patch, line = plt.matplotlib.patches.Patch, plt.matplotlib.lines.Line2D
+EXECUTIONS = (('nominal', 'Execução nominal'), ('falha', 'Execução com a roda travada no S1'))
+
+
+def build_stage_legend_handles() -> list:
+    """Return the behaviors and the fault span of the figure of the stages."""
+    patch = plt.matplotlib.patches.Patch
     behaviors = zip([*SERIES, SHADE], [*BEHAVIOR_NAMES, 'TWIST(0, 0)'], strict=True)
     return [
         *(patch(color=color, label=label) for color, label in behaviors),
         patch(color=STATUS_CRITICAL, label='FAULT_COGNIZANT ativo'),
+    ]
+
+
+def build_zoom_legend_handles() -> list:
+    """Return the markers of the figure of the echo zoom."""
+    line = plt.matplotlib.lines.Line2D
+    return [
         line([], [], color=INK, linewidth=1, linestyle='--', label='troca do comando'),
         line(
             [], [], marker='|', linestyle='', color=MUTED, markersize=8, label='amostra do State'
@@ -307,9 +310,9 @@ def build_legend_handles() -> list:
             [],
             marker='o',
             linestyle='',
-            color=MUTED,
+            color=INK,
             markersize=6,
-            label='primeiro State com o eco (cor do comportamento)',
+            label='primeiro State com o eco',
         ),
         line(
             [],
@@ -323,31 +326,44 @@ def build_legend_handles() -> list:
     ]
 
 
-def plot_execution(folder: Path, name: str, title: str) -> None:
-    """V-01, one execution: the stages at full scale and a zoom on the echo of each change."""
-    execution = Execution.from_directory(folder / name)
-    rows = len(execution.get_command_changes())
-    figure, (full, zoom) = plt.subplots(
-        2, 1, figsize=(WIDTH_IN, 3.0 + 0.35 * rows), gridspec_kw={'height_ratios': [3, rows]}
-    )
-    origin_s = get_sent_segments(execution)[0].start_s
-    draw_full_scale(full, execution, origin_s, title)
-    draw_zoom(zoom, execution)
+def plot_stages(folder: Path, executions: list[tuple[Execution, str]]) -> None:
+    """V-01: the stages sent and echoed in both executions, at full scale."""
+    figure, panels = plt.subplots(2, 1, figsize=(WIDTH_IN, 4.6), sharex=True)
+    for axes, (execution, title) in zip(panels, executions, strict=True):
+        draw_full_scale(axes, execution, get_sent_segments(execution)[0].start_s, title)
+    panels[0].set_xlabel('')  # shared time axis, labeled below
     figure.legend(
-        handles=build_legend_handles(),
-        loc='lower center',
-        ncol=3,
-        frameon=False,
-        fontsize=7,
+        handles=build_stage_legend_handles(), loc='lower center', ncol=5, frameon=False, fontsize=7
     )
-    save(figure, folder, f'fig_v01_{name}', layout_rect=(0, 0.17, 1, 1))  # legend below
+    save(figure, folder, 'fig_v01_selecao', layout_rect=(0, 0.06, 1, 1))  # legend below
+
+
+def plot_echo_zooms(folder: Path, executions: list[tuple[Execution, str]]) -> None:
+    """V-01: a zoom on the echo of each change of the command, in both executions."""
+    rows = [len(execution.get_command_changes()) for execution, _ in executions]
+    figure, panels = plt.subplots(
+        2,
+        1,
+        figsize=(WIDTH_IN, 1.6 + 0.45 * sum(rows)),
+        sharex=True,
+        gridspec_kw={'height_ratios': rows},
+    )
+    for axes, (execution, title) in zip(panels, executions, strict=True):
+        draw_zoom(axes, execution)
+        axes.set_title(title, loc='left', fontsize=9, color=INK)
+    panels[0].set_xlabel('')  # shared time axis, labeled below
+    figure.legend(
+        handles=build_zoom_legend_handles(), loc='lower center', ncol=2, frameon=False, fontsize=7
+    )
+    save(figure, folder, 'fig_v01_eco', layout_rect=(0, 0.1, 1, 1))  # legend below
 
 
 def plot_behavior_selection(evidence: Path) -> None:
-    """V-01: one figure for the nominal execution and one for the execution with the fault."""
+    """V-01: one figure of the stages and one of the echo zoom, each with both executions."""
     folder = evidence / 'V-01' / FINAL
-    plot_execution(folder, 'nominal', 'Execução nominal')
-    plot_execution(folder, 'falha', 'Execução com a roda travada no S1')
+    executions = [(Execution.from_directory(folder / name), title) for name, title in EXECUTIONS]
+    plot_stages(folder, executions)
+    plot_echo_zooms(folder, executions)
 
 
 def plot_response_times(evidence: Path) -> None:
