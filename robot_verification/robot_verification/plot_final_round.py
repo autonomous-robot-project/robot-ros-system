@@ -448,8 +448,7 @@ def plot_power_cuts(evidence: Path) -> None:
         speeds = [getattr(sample.message, field) for sample in samples]
         highest = max(highest, *speeds)
         axes.plot(times, speeds, color=color, linewidth=1.2, label=label)
-    axes.axhline(V_R, color=MUTED, linewidth=1)
-    axes.text(times[-1], V_R, ' $v_r$', color=INK, va='center', fontsize=9)
+    axes.axhline(V_R, color=MUTED, linewidth=1, label='$v_\\mathrm{r}$ = 0,2 m/s')
     injection_s = recording.injection_s()
     if injection_s is not None:
         for panel in (axes, codes):
@@ -477,7 +476,7 @@ def plot_power_cuts(evidence: Path) -> None:
     axes.set_ylim(-0.02, highest * 1.08)
     axes.set_ylabel('Velocidade medida (m/s)')
     codes.set_xlabel('Tempo (s)')
-    axes.legend(loc='upper center', bbox_to_anchor=(0.5, 1.22), ncol=3, frameon=False, fontsize=8)
+    axes.legend(loc='upper center', bbox_to_anchor=(0.5, 1.32), ncol=2, frameon=False, fontsize=8)
     save(figure, folder, 'fig_v02_falha_cognizante')
 
 
