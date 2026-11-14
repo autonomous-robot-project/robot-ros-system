@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.patches import Patch
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import numpy as np
@@ -31,7 +32,7 @@ import numpy as np
 from robot_verification.check_v01 import Execution
 from robot_verification.check_v02 import FAULT_COGNIZANT, FAULT_WATCHDOG_RESTART, V_R, Recording
 from robot_verification.check_v03 import REFLEX_FRONT_OBSTACLE, ScreenRun, get_linear_speed
-from robot_verification.check_v04 import PlanRun
+from robot_verification.check_v04 import P_0, P_G, PlanRun
 from robot_verification.check_v06 import MAX_EXPIRY_DELAY_S, T_CMD_S, V06
 from robot_verification.check_v07 import T_SEQ_US, ResponseRun
 from robot_verification.recording import (
@@ -51,6 +52,7 @@ SERIES = ['#2a78d6', '#eb6834', '#1baf7a']
 STATUS_CRITICAL, STATUS_WARNING = '#d03b3b', '#fab219'
 INK, MUTED, GRID, SURFACE = '#0b0b0b', '#52514e', '#e4e3df', '#fcfcfb'
 SHADE = '#e9e8e4'  # windows of the procedure: power cut, screen placed
+WALL = '#3d3d3a'  # occupied cells of M (V-04)
 
 WIDTH_IN = 6.3  # text width of an A4 page with 2.5 cm margins
 MAP_M = Path(__file__).resolve().parents[2] / 'robot_bringup' / 'maps'
@@ -533,24 +535,23 @@ def get_forbidden_zone(occupied: np.ndarray, resolution: float) -> np.ndarray:
     return distance_transform_edt(~occupied) * resolution <= FORBIDDEN_RADIUS_M
 
 
+def plot_map(evidence: Path) -> None:
+    """V-04: the map M given to the deliberator, with p_0 and p_g, for the procedure."""
+    folder = evidence / 'V-04' / FINAL
+    figure, axes = plt.subplots(figsize=(WIDTH_IN * 0.75, WIDTH_IN * 0.75))
+    draw_map_m(axes)
+    axes.plot(*zip(P_0, P_G, strict=True), 'o', color=INK, markersize=5)
+    annotate_ends(axes)
+    add_map_legend(axes)
+    save(figure, folder, 'fig_v04_mapa')
+
+
 def plot_plan(evidence: Path) -> None:
     """V-04: the plan over M, its vertices and the path of the odometry."""
     folder = evidence / 'V-04' / FINAL
     run = PlanRun.from_bag(str(folder / 'v04'))
-    occupied, resolution, origin = read_map_m()
-    rows, columns = occupied.shape
-    extent = (
-        origin[0],
-        origin[0] + columns * resolution,
-        origin[1],
-        origin[1] + rows * resolution,
-    )
     figure, axes = plt.subplots(figsize=(WIDTH_IN * 0.75, WIDTH_IN * 0.75))
-    style_axes(axes)
-    axes.grid(False)
-    zone = np.where(occupied, 2, np.where(get_forbidden_zone(occupied, resolution), 1, 0))
-    colors = plt.matplotlib.colors.ListedColormap([SURFACE, SHADE, '#3d3d3a'])
-    axes.imshow(zone, cmap=colors, extent=extent, origin='upper', interpolation='nearest')
+    draw_map_m(axes)
     path = run.plans[0].message.poses
     axes.plot(
         [pose.pose.position.x for pose in path],
@@ -577,13 +578,57 @@ def plot_plan(evidence: Path) -> None:
         markeredgecolor=SURFACE,
         label='vértices (alvos dos GO_TO)',
     )
-    axes.annotate('$p_0$', (0.0, 0.0), xytext=(-14, -12), textcoords='offset points', color=INK)
-    axes.annotate('$p_g$', vertices[-1], xytext=(6, 6), textcoords='offset points', color=INK)
+    annotate_ends(axes)
+    add_map_legend(axes)
+    save(figure, folder, 'fig_v04_plano')
+
+
+def draw_map_m(axes: Axes) -> None:
+    """Draw M: the wall and the inflation zone of the costmap, on axes in the map frame."""
+    occupied, resolution, origin = read_map_m()
+    rows, columns = occupied.shape
+    style_axes(axes)
+    axes.grid(False)
+    zone = np.where(occupied, 2, np.where(get_forbidden_zone(occupied, resolution), 1, 0))
+    colors = plt.matplotlib.colors.ListedColormap([SURFACE, SHADE, WALL])
+    # One vector cell per map cell: an imshow goes into the PDF as a 2-bit indexed image, which
+    # poppler draws skewed. Row 0 of the image is the top of M, so the rows are flipped.
+    axes.pcolormesh(
+        origin[0] + np.arange(columns + 1) * resolution,
+        origin[1] + np.arange(rows + 1) * resolution,
+        np.flipud(zone),
+        cmap=colors,
+        vmin=0,
+        vmax=2,
+        edgecolors='face',  # no seams between cells
+    )
     axes.set_aspect('equal')
     axes.set_xlabel('x em map (m)')
     axes.set_ylabel('y em map (m)')
-    axes.legend(loc='lower right', frameon=True, facecolor=SURFACE, edgecolor=GRID, fontsize=8)
-    save(figure, folder, 'fig_v04_plano')
+
+
+def annotate_ends(axes: Axes) -> None:
+    axes.annotate('$p_0$', P_0, xytext=(-14, -12), textcoords='offset points', color=INK)
+    axes.annotate('$p_g$', P_G, xytext=(6, 6), textcoords='offset points', color=INK)
+
+
+def add_map_legend(axes: Axes) -> None:
+    """Add the legend below the axes, so M stays in view: the lines drawn, then the map areas."""
+    map_areas = [
+        Patch(color=WALL, label='parede de $M$'),
+        Patch(color=SHADE, label='zona de inflação do mapa de custos'),
+    ]
+    lines, _ = axes.get_legend_handles_labels()
+    axes.legend(
+        handles=[*lines, *map_areas],
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.12),
+        ncols=2,
+        frameon=True,
+        facecolor=SURFACE,
+        edgecolor=GRID,
+        fontsize=8,
+    )
 
 
 def main() -> None:
@@ -596,6 +641,7 @@ def main() -> None:
     plot_expiry_delays(evidence)
     plot_power_cuts(evidence)
     plot_screens(evidence)
+    plot_map(evidence)
     plot_plan(evidence)
 
 
