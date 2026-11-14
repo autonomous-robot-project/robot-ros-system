@@ -372,11 +372,13 @@ def plot_response_times(evidence: Path) -> None:
     """V-07 alone (C0), and V-07 with C1 and C2 of V-08: cumulative distribution of Δ."""
     folder = evidence / 'V-07' / FINAL
     c0_bag = folder / 'v07'
+    c1_bag = evidence / 'V-08' / f'{FINAL}_C1' / 'v08_c1'
+    c2_bag = evidence / 'V-08' / f'{FINAL}_C2' / 'v08_c2'
     plot_response_distribution({'Teste 7': c0_bag}, folder, 'fig_v07_resposta')
     runs = {
         'C0, Teste 7': c0_bag,
-        'C1, Teste 8, deliberador ativo': evidence / 'V-08' / f'{FINAL}_C1' / 'v08_c1',
-        'C2, Teste 8, CPU saturada': evidence / 'V-08' / f'{FINAL}_C2' / 'v08_c2',
+        'C1, Teste 8, deliberador computando': c1_bag,
+        'C2, Teste 8, computador embarcado\nsobrecarregado': c2_bag,  # two lines: clear of T_seq
     }
     plot_response_distribution(runs, folder, 'fig_v07_v08_resposta')
 
@@ -408,8 +410,8 @@ def plot_response_distribution(runs: dict[str, Path], folder: Path, name: str) -
     axes.set_ylim(0, 1.02)
     axes.set_xlabel('Δ: ativação do código no controlador → chegada do TWIST(0, 0) (ms)')
     axes.set_ylabel('Fração dos eventos')
-    # Left edge past the curves (Δ ≤ 25 ms) and right edge before the T_seq line.
-    axes.legend(loc='center left', bbox_to_anchor=(0.28, 0.5), frameon=False, fontsize=8)
+    # Left edge past the curves at mid height (Δ ≤ 12 ms there), right edge before the T_seq line.
+    axes.legend(loc='center left', bbox_to_anchor=(0.14, 0.5), frameon=False, fontsize=8)
     save(figure, folder, name)
 
 
