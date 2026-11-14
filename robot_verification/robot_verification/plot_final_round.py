@@ -3,13 +3,13 @@ Figures of the final round of the verifications, for the monograph (robot-docs n
 
 Criticality: T2, product (robot-docs codigo.md).
 
-One figure per verification, each showing what its criterion judges, read from the bags by the
-same classes as the checks: the response time Δ of V-07 under C0, C1 and C2 of V-08 against
+One figure per verification, each showing what its criterion judges, read from the bags by the same
+classes as the checks: the response time Δ of V-07 alone, and under C0, C1 and C2 of V-08, against
 T_seq; the expiry delay of each interruption of V-06 against T_cmd; the wheel speeds and the
 cognizant fault around the power cuts of V-02; the stages sent and echoed in both executions of
-V-01, and in a second figure a zoom on the echo of each change against the State period; the
-speed and the front reflex around the screens of V-03; the plan over M and the path of the
-odometry in V-04. The numbers and the verdicts come from the checks; the figures only show them.
+V-01, and in a second figure a zoom on the echo of each change against the State period; the speed
+and the front reflex around the screens of V-03; the plan over M and the path of the odometry in
+V-04. The numbers and the verdicts come from the checks; the figures only show them.
 
 Usage: plot_final_round <evidencias directory>. Writes fig_*.pdf and fig_*.png into the
 2026-11-02_final folders of each verification.
@@ -26,7 +26,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, MultipleLocator
 import numpy as np
 
 from robot_verification.check_v01 import Execution
@@ -369,15 +369,26 @@ def plot_behavior_selection(evidence: Path) -> None:
 
 
 def plot_response_times(evidence: Path) -> None:
-    """V-07 and V-08: cumulative distribution of Δ in C0, C1 and C2, against T_seq."""
+    """V-07 alone (C0), and V-07 with C1 and C2 of V-08: cumulative distribution of Δ."""
+    folder = evidence / 'V-07' / FINAL
+    c0_bag = folder / 'v07'
+    plot_response_distribution({'Teste 7': c0_bag}, folder, 'fig_v07_resposta')
     runs = {
-        'C0 (V-07)': evidence / 'V-07' / FINAL / 'v07',
-        'C1 (deliberador ativo)': evidence / 'V-08' / f'{FINAL}_C1' / 'v08_c1',
-        'C2 (CPU saturada)': evidence / 'V-08' / f'{FINAL}_C2' / 'v08_c2',
+        'C0, Teste 7': c0_bag,
+        'C1, Teste 8, deliberador ativo': evidence / 'V-08' / f'{FINAL}_C1' / 'v08_c1',
+        'C2, Teste 8, CPU saturada': evidence / 'V-08' / f'{FINAL}_C2' / 'v08_c2',
     }
+    plot_response_distribution(runs, folder, 'fig_v07_v08_resposta')
+
+
+RESPONSE_TICK_MS: float = 10.0  # x ticks of the Δ figures, to read the values of the curves
+
+
+def plot_response_distribution(runs: dict[str, Path], folder: Path, name: str) -> None:
+    """Cumulative distribution of Δ of each run against T_seq, one curve per label."""
     figure, axes = plt.subplots(figsize=(WIDTH_IN, 3.0))
     style_axes(axes)
-    for color, (label, bag) in zip(SERIES, runs.items(), strict=True):
+    for color, (label, bag) in zip(SERIES, runs.items(), strict=False):
         responses_ms = np.sort(np.array(ResponseRun.from_bag(str(bag)).get_responses_us())) / 1e3
         fraction = np.arange(1, len(responses_ms) + 1) / len(responses_ms)
         maximum = format_decimal(round(responses_ms[-1], 1))
@@ -391,13 +402,15 @@ def plot_response_times(evidence: Path) -> None:
         )
     t_seq_ms = T_SEQ_US / 1e3
     axes.axvline(t_seq_ms, color=STATUS_CRITICAL, linewidth=1.2)
-    axes.text(t_seq_ms - 1, 0.05, r'$T_{seq}$ = 100 ms', color=INK, ha='right', fontsize=9)
+    axes.text(t_seq_ms - 1, 0.05, r'$T_\mathrm{seq}$ = 100 ms', color=INK, ha='right', fontsize=9)
     axes.set_xlim(0, t_seq_ms * 1.08)
+    axes.xaxis.set_major_locator(MultipleLocator(RESPONSE_TICK_MS))
     axes.set_ylim(0, 1.02)
     axes.set_xlabel('Δ: ativação do código no controlador → chegada do TWIST(0, 0) (ms)')
     axes.set_ylabel('Fração dos eventos')
-    axes.legend(loc='center right', frameon=False, fontsize=8)
-    save(figure, evidence / 'V-07' / FINAL, 'fig_v07_v08_resposta')
+    # Left edge past the curves (Δ ≤ 25 ms) and right edge before the T_seq line.
+    axes.legend(loc='center left', bbox_to_anchor=(0.28, 0.5), frameon=False, fontsize=8)
+    save(figure, folder, name)
 
 
 def plot_expiry_delays(evidence: Path) -> None:
