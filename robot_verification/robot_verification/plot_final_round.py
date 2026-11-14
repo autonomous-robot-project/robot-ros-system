@@ -424,7 +424,11 @@ def plot_expiry_delays(evidence: Path) -> None:
     axes.plot(numbers, delays_ms, 'o', color=SERIES[0], markersize=6)
     references = (
         (T_CMD_S, r'$T_\mathrm{cmd}$ = 200 ms', MUTED),
-        (MAX_EXPIRY_DELAY_S, r'$T_\mathrm{cmd} + T_\mathrm{c}$ = 210 ms (limite)', STATUS_CRITICAL),
+        (
+            MAX_EXPIRY_DELAY_S,
+            r'$T_\mathrm{cmd} + T_\mathrm{c}$ = 210 ms (limite)',
+            STATUS_CRITICAL,
+        ),
     )
     for value, label, color in references:
         axes.axhline(value * 1e3, color=color, linewidth=1.2)
