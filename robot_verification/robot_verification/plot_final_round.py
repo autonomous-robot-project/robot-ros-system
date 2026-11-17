@@ -56,7 +56,7 @@ WALL = '#3d3d3a'  # occupied cells of M (V-04)
 
 WIDTH_IN = 6.3  # text width of an A4 page with 2.5 cm margins
 MAP_M = Path(__file__).resolve().parents[2] / 'robot_bringup' / 'maps'
-FORBIDDEN_RADIUS_M = 0.331  # r + m + res of the costmap of the trials (ADR 042)
+FORBIDDEN_RADIUS_M = 0.281  # r + m + res = 0.131 + 0.10 + 0.05, robot_radius of the trial costmap (ADR 042)
 
 
 @dataclass
@@ -634,7 +634,7 @@ def add_map_legend(axes: Axes) -> None:
     """Add the legend below the axes, so M stays in view: the lines drawn, then the map areas."""
     map_areas = [
         Patch(color=WALL, label='parede de $M$'),
-        Patch(color=SHADE, label='zona de inflação do mapa de custos'),
+        Patch(color=SHADE, label='zona proibida do mapa de custos'),
     ]
     lines, _ = axes.get_legend_handles_labels()
     axes.legend(
